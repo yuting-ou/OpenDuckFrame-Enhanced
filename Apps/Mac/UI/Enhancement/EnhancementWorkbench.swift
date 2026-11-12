@@ -2326,12 +2326,12 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         summary.font = .systemFont(ofSize: 11)
         summary.textColor = .secondaryLabelColor
         summary.maximumNumberOfLines = 2
-        summary.preferredMaxLayoutWidth = WorkbenchStyle.inspectorWidth - 32
+        summary.preferredMaxLayoutWidth = 240
         simpleSummaryLabel = summary
         let effect = NSTextField(wrappingLabelWithString: "")
         effect.font = .systemFont(ofSize: 12, weight: .semibold)
         effect.maximumNumberOfLines = 2
-        effect.preferredMaxLayoutWidth = WorkbenchStyle.inspectorWidth - 32
+        effect.preferredMaxLayoutWidth = 240
         effect.stringValue = EnhancementText.t("○ Interpolation idle", "○ 插帧待启动")
         effect.textColor = .secondaryLabelColor
         simpleEffectLabel = effect
