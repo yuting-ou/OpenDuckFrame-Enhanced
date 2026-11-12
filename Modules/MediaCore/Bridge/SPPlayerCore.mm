@@ -4724,6 +4724,7 @@ static CGImageRef spCreateScreenshotImage(CVPixelBufferRef snapshot, sp::VideoOr
     if (visible) {
         [_renderer setSubmitsSuspended:NO];
         [_renderer kickSubmitDrain];
+        [_generator resumeAfterBackpressure];
     } else {
         [_renderer setSubmitsSuspended:YES];
     }

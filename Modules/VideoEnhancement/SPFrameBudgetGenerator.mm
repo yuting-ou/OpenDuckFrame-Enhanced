@@ -847,6 +847,14 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
     _cv.notify_all();
 }
 
+- (void)resumeAfterBackpressure {
+    std::lock_guard<std::mutex> lock(_mtx);
+    if (_emitterPaused) {
+        _emitterPaused = false;
+        _cv.notify_all();
+    }
+}
+
 - (void)destroyEngine {
     [self quiesceEmitterFlushingRingReturning:YES];
     SPFRCEngine *engine = nil;
