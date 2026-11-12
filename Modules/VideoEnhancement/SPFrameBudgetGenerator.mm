@@ -173,6 +173,7 @@ struct SPBudgetEmitStat { uint8_t covered = 0; uint8_t toggled = 0; float benefi
     bool _emitterStarted;
     bool _emitterQuit;
     bool _emitterPaused;
+    bool _quiescing;
     bool _emitterBusy;
     bool _shutdownDone;
     bool _observersStarted;
@@ -793,6 +794,7 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
 
 - (void)quiesceEmitterFlushingRingReturning:(BOOL)returning {
     std::unique_lock<std::mutex> lk(_mtx);
+    _quiescing = true;
     _emitterPaused = true;
     _cv.notify_all();
     _cv.wait(lk, [&] { return !_emitterBusy; });
@@ -802,6 +804,7 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
         _ring.pop_front();
         [self releaseEntryLocked:e returning:(returning && e.generation == liveGen)];
     }
+    _quiescing = false;
     _cv.notify_all();
 }
 
@@ -849,7 +852,9 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
 
 - (void)resumeAfterBackpressure {
     std::lock_guard<std::mutex> lock(_mtx);
-    if (_emitterPaused) {
+    // Never override a quiesce in progress: its drain must observe a stable
+    // pause so the emitter cannot take ring entries mid-reset.
+    if (_emitterPaused && !_quiescing) {
         _emitterPaused = false;
         _cv.notify_all();
     }

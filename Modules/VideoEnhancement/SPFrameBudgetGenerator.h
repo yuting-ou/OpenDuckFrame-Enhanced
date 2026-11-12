@@ -49,6 +49,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)applyModeReset:(SPFrameInterpolationMode)mode;
 /// Clears a backpressure pause (ring-full interrupt) so generation resumes once
 /// presentation drains again, e.g. when the window becomes visible after occlusion.
+/// Does not override an in-progress quiesce or mode reset.
 - (void)resumeAfterBackpressure;
 /// Decode thread: breaks pairing without destroying the engine. Buffered
 /// originals still drain in order, including at end of input.

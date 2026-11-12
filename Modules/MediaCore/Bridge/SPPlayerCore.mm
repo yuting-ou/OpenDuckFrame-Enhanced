@@ -9076,6 +9076,9 @@ static void spApplyDecodeQoS() {
     if (_rendererConfiguredOpenGeneration.load(std::memory_order_acquire) !=
         _openGeneration.load(std::memory_order_acquire)) return;
     if (!_renderer.isReady) return;
+    // The budget emitter can pause on a full ring and only drains while running;
+    // wake it on every display tick so backpressure cannot deadlock generation.
+    [_generator resumeAfterBackpressure];
 #if SP_APP_STORE
     static const bool vstatsOn = false;
 #else
