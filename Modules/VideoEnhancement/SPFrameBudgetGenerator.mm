@@ -1230,8 +1230,8 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
                 size_t phases = 0;
                 for (auto &event : prev.scheduledBetween) {
                     if (event.action != SPScheduleAction::Interpolate) continue;
-                    if (phases < 4) { ++phases; continue; }
-                    // Keep the requested output cadence without a fifth model
+                    if (phases < 5) { ++phases; continue; }
+                    // Keep the requested output cadence without a sixth model
                     // pass: present the source picture at this slot instead.
                     event.action = SPScheduleAction::Hold;
                     event.phase = SPRational{0, 1};
@@ -1428,7 +1428,7 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
                 float phase=0;if(!spPhaseFitsFloat(event.phase,phase)){[phases removeAllObjects];break;}
                 [phases addObject:@(phase)];
             }
-            if(phases.count==0 || phases.count>4){a.pair.state=SPBudgetPairState::Skipped;_cv.notify_all();continue;}
+            if(phases.count==0 || phases.count>5){a.pair.state=SPBudgetPairState::Skipped;_cv.notify_all();continue;}
             const bool needsPreceding=[provider respondsToSelector:@selector(requiresPrecedingSource)] && [provider requiresPrecedingSource];
             if (needsPreceding && (!a.preceding || a.preceding->ptsUs >= a.ptsUs ||
                 ![provider respondsToSelector:@selector(submitPreceding:previous:current:precedingPTSUs:previousPTSUs:currentPTSUs:phases:token:completion:)])) {
@@ -1526,7 +1526,7 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
                     if (!spPhaseFitsFloat(event.phase, phase)) { [phases removeAllObjects]; break; }
                     [phases addObject:@(phase)];
                 }
-                if (phases.count > 0 && phases.count <= 4) {
+                if (phases.count > 0 && phases.count <= 5) {
                     submitted = [engine submitPhasesWithFrameA:fa frameB:fb
                         ptsA:CMTimeMake(a.ptsUs, 1000000) ptsB:CMTimeMake(b.ptsUs, 1000000)
                         phases:phases sequential:NO token:token

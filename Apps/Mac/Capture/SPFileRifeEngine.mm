@@ -1,10 +1,42 @@
 #import "SPFileRifeEngine.h"
 #import "SPRifeBridge.h"
 #import "SPFileColorTransfer.h"
+#import <Metal/Metal.h>
 #import <VideoToolbox/VideoToolbox.h>
 #include <atomic>
 #include <cmath>
 #include <initializer_list>
+
+static const char *kSPRifeUpscaleMSL =
+"#include <metal_stdlib>\n"
+"using namespace metal;\n"
+"struct Params { uint2 dstSize; };\n"
+"kernel void spRifeY(texture2d<float, access::sample> src [[texture(0)]],\n"
+"                    texture2d<float, access::write> dst [[texture(1)]],\n"
+"                    constant Params &p [[buffer(0)]],\n"
+"                    uint2 gid [[thread_position_in_grid]]) {\n"
+"  if (gid.x >= p.dstSize.x || gid.y >= p.dstSize.y) return;\n"
+"  constexpr sampler s(coord::normalized, filter::linear, address::clamp_to_edge);\n"
+"  float2 uv = (float2(gid) + 0.5) / float2(p.dstSize);\n"
+"  float3 rgb = src.sample(s, uv).rgb;\n"
+"  float y = dot(rgb, float3(0.2126, 0.7152, 0.0722));\n"
+"  dst.write(float4(y * 219.0 / 255.0 + 16.0 / 255.0, 0.0, 0.0, 1.0), gid);\n"
+"}\n"
+"kernel void spRifeUV(texture2d<float, access::sample> src [[texture(0)]],\n"
+"                     texture2d<float, access::write> dst [[texture(1)]],\n"
+"                     constant Params &p [[buffer(0)]],\n"
+"                     uint2 gid [[thread_position_in_grid]]) {\n"
+"  uint2 c = p.dstSize / 2;\n"
+"  if (gid.x >= c.x || gid.y >= c.y) return;\n"
+"  constexpr sampler s(coord::normalized, filter::linear, address::clamp_to_edge);\n"
+"  float2 uv = (float2(gid) * 2.0 + 1.0) / float2(p.dstSize);\n"
+"  float3 rgb = src.sample(s, uv).rgb;\n"
+"  float y = dot(rgb, float3(0.2126, 0.7152, 0.0722));\n"
+"  float u = (rgb.b - y) / 1.8556;\n"
+"  float v = (rgb.r - y) / 1.5748;\n"
+"  dst.write(float4((u + 0.5) * 224.0 / 255.0 + 16.0 / 255.0,\n"
+"                   (v + 0.5) * 224.0 / 255.0 + 16.0 / 255.0, 0.0, 1.0), gid);\n"
+"}\n";
 
 static NSError *SPFileRifeError(NSInteger code,NSString *message){return [NSError errorWithDomain:@"OpenDuckFrame.FileRife" code:code userInfo:@{NSLocalizedDescriptionKey:message}];}
 static CVPixelBufferRef SPFileRifeCreate(int w,int h,OSType format){
@@ -33,6 +65,11 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
     CVPixelBufferRef _cachedSource,_cachedInfer,_cachedRGB;
     int64_t _cachedPTS;
     uint64_t _cachedIdentity,_nextIdentity;
+    id<MTLDevice> _metalDevice;
+    id<MTLCommandQueue> _metalQueue;
+    id<MTLComputePipelineState> _metalY,_metalUV;
+    CVMetalTextureCacheRef _metalCache;
+    BOOL _metalTried,_metalReady;
 }
 - (instancetype)initWithModelID:(NSString *)modelID quality:(NSString *)quality {return [self initWithModelID:modelID quality:quality resourceBundle:NSBundle.mainBundle];}
 - (instancetype)initWithModelID:(NSString *)modelID quality:(NSString *)quality resourceBundle:(NSBundle *)bundle {
@@ -62,9 +99,71 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
     if(_downscale){CFRelease(_downscale);_downscale=NULL;}
     if(_upscale){CFRelease(_upscale);_upscale=NULL;}
 }
-- (void)dealloc {[self releaseBridges];[self clearInputCache];[self releaseSessions];}
+- (void)dealloc {[self releaseBridges];[self clearInputCache];[self releaseSessions];if(_metalCache)CFRelease(_metalCache);}
 // Diagnostic compatibility: existing probes read the active bridge through KVC.
 - (SPRifeBridge *)bridge { @synchronized(self){ return _bridges.firstObject; } }
+- (BOOL)ensureMetalUpscaler {
+    if(_metalTried)return _metalReady;
+    _metalTried=YES;
+    _metalDevice=MTLCreateSystemDefaultDevice();
+    if(!_metalDevice)return NO;
+    NSError *error=nil;
+    id<MTLLibrary> library=[_metalDevice newLibraryWithSource:@(kSPRifeUpscaleMSL) options:nil error:&error];
+    if(!library)return NO;
+    _metalY=[_metalDevice newComputePipelineStateWithFunction:[library newFunctionWithName:@"spRifeY"] error:&error];
+    _metalUV=[_metalDevice newComputePipelineStateWithFunction:[library newFunctionWithName:@"spRifeUV"] error:&error];
+    _metalQueue=[_metalDevice newCommandQueue];
+    if(CVMetalTextureCacheCreate(kCFAllocatorDefault,NULL,_metalDevice,NULL,&_metalCache)!=kCVReturnSuccess)_metalCache=NULL;
+    _metalReady=_metalY&&_metalUV&&_metalQueue&&_metalCache;
+    return _metalReady;
+}
+// Fused bilinear upscale and BT.709 video-range NV12 conversion for generated
+// frames. The VT path in submit remains the fallback when Metal is unavailable.
+- (BOOL)metalConvertBGRA:(CVPixelBufferRef)src toNV12:(CVPixelBufferRef)dst {
+    if(![self ensureMetalUpscaler])return NO;
+    int sw=(int)CVPixelBufferGetWidth(src),sh=(int)CVPixelBufferGetHeight(src);
+    int dw=(int)CVPixelBufferGetWidth(dst),dh=(int)CVPixelBufferGetHeight(dst);
+    if(sw<2||sh<2||dw<2||dh<2||(dw&1)||(dh&1))return NO;
+    if(CVPixelBufferGetPixelFormatType(src)!=kCVPixelFormatType_32BGRA||
+       CVPixelBufferGetPixelFormatType(dst)!=kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)return NO;
+    CVMetalTextureRef inRef=NULL,yRef=NULL,uvRef=NULL;
+    BOOL ok=NO;
+    if(CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,_metalCache,src,NULL,MTLPixelFormatBGRA8Unorm,sw,sh,0,&inRef)!=kCVReturnSuccess||!inRef)return NO;
+    if(CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,_metalCache,dst,NULL,MTLPixelFormatR8Unorm,dw,dh,0,&yRef)!=kCVReturnSuccess||!yRef){CFRelease(inRef);return NO;}
+    if(CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,_metalCache,dst,NULL,MTLPixelFormatRG8Unorm,dw/2,dh/2,1,&uvRef)!=kCVReturnSuccess||!uvRef){CFRelease(inRef);CFRelease(yRef);return NO;}
+    id<MTLCommandBuffer> command=[_metalQueue commandBuffer];
+    if(command){
+        struct { uint32_t w,h; } params={(uint32_t)dw,(uint32_t)dh};
+        MTLSize full=MTLSizeMake(dw,dh,1),half=MTLSizeMake(dw/2,dh/2,1),group=MTLSizeMake(16,16,1);
+        id<MTLComputeCommandEncoder> y=[command computeCommandEncoder];
+        BOOL encoded=NO;
+        if(y){
+            [y setComputePipelineState:_metalY];
+            [y setTexture:CVMetalTextureGetTexture(inRef) atIndex:0];
+            [y setTexture:CVMetalTextureGetTexture(yRef) atIndex:1];
+            [y setBytes:&params length:sizeof(params) atIndex:0];
+            [y dispatchThreads:full threadsPerThreadgroup:group];
+            [y endEncoding];
+            encoded=YES;
+        }
+        if(encoded){
+            id<MTLComputeCommandEncoder> uv=[command computeCommandEncoder];
+            if(uv){
+                [uv setComputePipelineState:_metalUV];
+                [uv setTexture:CVMetalTextureGetTexture(inRef) atIndex:0];
+                [uv setTexture:CVMetalTextureGetTexture(uvRef) atIndex:1];
+                [uv setBytes:&params length:sizeof(params) atIndex:0];
+                [uv dispatchThreads:half threadsPerThreadgroup:group];
+                [uv endEncoding];
+                [command commit];
+                [command waitUntilCompleted];
+                ok=command.status==MTLCommandBufferStatusCompleted;
+            }
+        }
+    }
+    CFRelease(inRef);CFRelease(yRef);CFRelease(uvRef);
+    return ok;
+}
 - (void)invalidate {
     NSArray<SPRifeBridge *> *bridges;
     @synchronized(self){_epoch++;_ready=NO;bridges=_bridges;_bridges=nil;}
@@ -135,7 +234,7 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
     return YES;
 }
 - (BOOL)submitPrevious:(CVPixelBufferRef)previous current:(CVPixelBufferRef)current previousPTSUs:(int64_t)previousPTSUs currentPTSUs:(int64_t)currentPTSUs phases:(NSArray<NSNumber *> *)phases token:(uint64_t)token completion:(SPFRCPhasesCompletion)completion {
-    if(!previous||!current||!completion||currentPTSUs<=previousPTSUs||phases.count<1||phases.count>4)return NO;
+    if(!previous||!current||!completion||currentPTSUs<=previousPTSUs||phases.count<1||phases.count>5)return NO;
     uint64_t seen;NSArray<SPRifeBridge *> *bridges;int inferW,inferH;@synchronized(self){if(!_ready)return NO;seen=_epoch;bridges=_bridges;inferW=_inferenceWidth;inferH=_inferenceHeight;}
     if(!bridges.count||inferW<2||inferH<2)return NO;
     if(_busy.exchange(true))return NO;
@@ -163,6 +262,8 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
            CGRectEqualToRect(CVImageBufferGetCleanRect(current),CGRectMake(0,0,self->_width,self->_height))&&
            (format==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange||format==kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)&&
            !CFEqual(t1,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ)&&!CFEqual(t1,kCVImageBufferTransferFunction_ITU_R_2100_HLG);
+        const BOOL metalEligible=format==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange&&m1&&p1&&
+            CFEqual(m1,kCVImageBufferYCbCrMatrix_ITU_R_709_2)&&CFEqual(p1,kCVImageBufferColorPrimaries_ITU_R_709_2);
         if(m1)CFRelease(m1);if(m2)CFRelease(m2);if(p1)CFRelease(p1);if(p2)CFRelease(p2);if(t1)CFRelease(t1);if(t2)CFRelease(t2);
         if(!compatible||!SPConfigureFileColorTransfer(self->_toNV12,previous,YES)||
            VTSessionSetProperty(self->_toRGB,kVTPixelTransferPropertyKey_DestinationColorPrimaries,kCVImageBufferColorPrimaries_ITU_R_709_2)!=noErr||
@@ -233,17 +334,24 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
             if(![slot isKindOfClass:[SPOwnedPixelBuffer class]]){failure=SPFileRifeError(8,@"RIFE 没有返回全部插帧。");break;}
             SPOwnedPixelBuffer *box=(SPOwnedPixelBuffer *)slot;
             if(CVPixelBufferGetWidth(box.buffer)!=(size_t)inferW||CVPixelBufferGetHeight(box.buffer)!=(size_t)inferH){failure=SPFileRifeError(11,@"RIFE 输出尺寸不正确。");break;}
-            CVPixelBufferRef inferNV=SPFileRifeCreate(inferW,inferH,format);
-            if(!inferNV){failure=SPFileRifeError(12,@"RIFE 输出画面分配失败。");break;}
-            SPFileRifeCopyAttachments(previous,inferNV);
-            if(VTPixelTransferSessionTransferImage(self->_toNV12,box.buffer,inferNV)!=noErr){CVPixelBufferRelease(inferNV);failure=SPFileRifeError(5,@"RIFE 输出格式转换失败。");break;}
             if(self->_upscale){
                 CVPixelBufferRef full=SPFileRifeCreate(self->_width,self->_height,format);
-                if(!full||VTPixelTransferSessionTransferImage(self->_upscale,inferNV,full)!=noErr){if(full)CVPixelBufferRelease(full);CVPixelBufferRelease(inferNV);failure=SPFileRifeError(13,@"RIFE 输出放大失败。");break;}
-                CVPixelBufferRelease(inferNV);
+                if(!full){failure=SPFileRifeError(12,@"RIFE 输出画面分配失败。");break;}
                 SPFileRifeCopyAttachments(previous,full);
+                if(!metalEligible||![self metalConvertBGRA:box.buffer toNV12:full]){
+                    CVPixelBufferRef inferNV=SPFileRifeCreate(inferW,inferH,format);
+                    if(!inferNV){CVPixelBufferRelease(full);failure=SPFileRifeError(12,@"RIFE 输出画面分配失败。");break;}
+                    BOOL ok=VTPixelTransferSessionTransferImage(self->_toNV12,box.buffer,inferNV)==noErr;
+                    if(ok){SPFileRifeCopyAttachments(previous,full);ok=VTPixelTransferSessionTransferImage(self->_upscale,inferNV,full)==noErr;}
+                    CVPixelBufferRelease(inferNV);
+                    if(!ok){CVPixelBufferRelease(full);failure=SPFileRifeError(13,@"RIFE 输出放大失败。");break;}
+                }
                 [converted addObject:[[SPOwnedPixelBuffer alloc] initWithBufferNoCopy:full]];
             }else{
+                CVPixelBufferRef inferNV=SPFileRifeCreate(inferW,inferH,format);
+                if(!inferNV){failure=SPFileRifeError(12,@"RIFE 输出画面分配失败。");break;}
+                SPFileRifeCopyAttachments(previous,inferNV);
+                if(VTPixelTransferSessionTransferImage(self->_toNV12,box.buffer,inferNV)!=noErr){CVPixelBufferRelease(inferNV);failure=SPFileRifeError(5,@"RIFE 输出格式转换失败。");break;}
                 [converted addObject:[[SPOwnedPixelBuffer alloc] initWithBufferNoCopy:inferNV]];
             }
         }

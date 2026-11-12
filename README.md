@@ -6,8 +6,8 @@
 <p align="center">Apple silicon · macOS 14+ · <a href="LICENSE">MIT</a></p>
 
 > **This is OpenDuckFrame-Enhanced, a community fork** of [Jun-bao/OpenDuckFrame](https://github.com/Jun-bao/OpenDuckFrame) (MIT). Original copyright and third-party notices are preserved. Changes:
-> - **Unlocked 4K file interpolation**: file RIFE input cap raised from 1920×1080 to 3840×2160. On Apple M2 Pro with a 25 fps 4K source: X2 presents 50 fps, X3 75 fps, fixed 60 60 fps, and fixed 120 about 104 fps (4.16×; holds fill the remaining refresh slots). Generated-frame coverage stays at 100%.
-> - **Adaptive 4K inference**: the model input is capped at a 1920/1600/1280/1024 long edge by target rate, phases run on up to four parallel engines, and generated frames are restored to 4K; 1080p and smaller sources keep native-size inference.
+> - **Unlocked 4K file interpolation**: file RIFE input cap raised from 1920×1080 to 3840×2160. On Apple M2 Pro with a 25 fps 4K source: X2 presents 50 fps, X3 75 fps, fixed 60 60 fps, and fixed 120 117–120 fps. Generated-frame coverage stays at 100%.
+> - **Adaptive 4K inference**: the model input is capped at a 1920/1600/1280/1024 long edge by target rate, phases run on up to four parallel engines, and generated frames are composited back to 4K with a fused Metal upscale and NV12 conversion instead of per-frame VT round trips.
 > - **Beginner-friendly workbench**: one-click enhance plus three preferences: Smoother (X3, interpolation only), Auto (X2, interpolation only), and Clearer (ArtCNN C4F16 + interpolation on 1080p, upscaling off on 4K). Advanced controls stay collapsed.
 > - **Instant start**: file mode starts immediately (no 3 s countdown); start delay configurable 0–20 s (0 = instant).
 > - **Interpolation health indicator**: live "working / not interpolating / awaiting keyframe" state with generated-frame coverage.
