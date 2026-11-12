@@ -193,7 +193,7 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
                 inferH=MAX(2,((int)llround(h*scale))&~1);
             }
         }
-        [self releaseBridges];[self releaseSessions];[self clearInputCache];
+        @synchronized(self){[self releaseBridges];[self releaseSessions];[self clearInputCache];}
         if(VTPixelTransferSessionCreate(NULL,&self->_toRGB)!=noErr||VTPixelTransferSessionCreate(NULL,&self->_toNV12)!=noErr){
             CVPixelBufferRelease(sample);completion(NO,@"RIFE 色彩转换准备失败。");return;
         }

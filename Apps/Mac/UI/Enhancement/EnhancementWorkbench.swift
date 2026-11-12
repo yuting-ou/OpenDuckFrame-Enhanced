@@ -2451,8 +2451,10 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             profile.scaleEnabled = false
         case 2:
             profile.rate = .multiplier(2)
-            if is4K {
-                // 4K output cannot take a native 2x pass; keep the source sharp.
+            let artCNNEligible = w > 0 && h > 0 && w <= 1920 && h <= 1080 && w * 2 <= 3840 && h * 2 <= 2160
+            if is4K || (isFile && !artCNNEligible) {
+                // 4K output cannot take a native 2x pass, and ArtCNN is limited
+                // to 1080p input; keep the source sharp instead of failing.
                 profile.scaleEnabled = false
             } else {
                 profile.scaleEnabled = true
@@ -2484,12 +2486,19 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private func updateSimpleSummary() {
         let (w, h) = sourcePixelSize()
         let is4K = w >= 3000 || h >= 1700
+        let isFile = profile.sourceKind == "file"
+        let artCNNEligible = w > 0 && h > 0 && w <= 1920 && h <= 1080 && w * 2 <= 3840 && h * 2 <= 2160
         let pref = simplePreferenceControl?.selectedSegment ?? 1
         let mult = pref == 0 ? 3 : 2
         let sizeText = w > 0 ? "\(w)×\(h)" : EnhancementText.t("source", "片源")
         let scaleText: String
         if is4K { scaleText = EnhancementText.t("4K already sharp · upscaling off", "4K 已够清晰 · 超分自动关") }
-        else if pref == 2 { scaleText = EnhancementText.t("upscaling on", "超分开") }
+        else if pref == 2 {
+            scaleText = isFile && !artCNNEligible
+                ? EnhancementText.t("upscaling unavailable at this size", "该尺寸超分不可用 · 已关")
+                : EnhancementText.t("upscaling on", "超分开")
+        }
+        else if pref == 1 && !isFile && !is4K { scaleText = EnhancementText.t("upscaling on", "超分开") }
         else { scaleText = EnhancementText.t("upscaling off", "超分关") }
         let rateText = EnhancementText.t("frame rate ×", "帧率 ×") + "\(mult)"
         simpleSummaryLabel?.stringValue = "\(sizeText) · \(rateText) · \(scaleText)"
@@ -5008,8 +5017,11 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             switch profile.rate {
             case .multiplier(let value): mode = value; numerator = 0; denominator = 1
             case .fixedFPS(let n, let d):
-                guard d > 0, n > 0, player.workbenchSourceFPS > 0, Double(n) / Double(d) <= player.workbenchSourceFPS * 5 + 0.01 else {
-                    fileApplyError = EnhancementText.t("For file playback choose a fixed rate up to 5× the source rate.", "文件固定帧率目前最多为来源帧率的 5 倍。")
+                // The scheduler accepts fixed rates up to 240 fps; also keep the
+                // file-mode cap at 5x the detected source rate.
+                let maxFixedRate = min(player.workbenchSourceFPS * 5, 240)
+                guard d > 0, n > 0, player.workbenchSourceFPS > 0, Double(n) / Double(d) <= maxFixedRate + 0.01 else {
+                    fileApplyError = EnhancementText.t("For file playback choose a fixed rate up to 5× the source rate (max 240 fps).", "文件固定帧率最多为来源帧率的 5 倍，且不超过 240 帧。")
                     statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
                 }
                 mode = 1; numerator = n; denominator = d
@@ -5106,7 +5118,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
 
     private func fileStatus() -> String {
         if !fileApplyError.isEmpty { return fileApplyError }
-        if profile.scaleEnabled && !ArtCNNSRSelection.contains(profile.scaleEngineID) { return EnhancementText.t("This scaler is not connected to file playback yet.", "这个缩放引擎尚未接入文件播放。") }
+        if profile.scaleEnabled && !ArtCNNSRSelection.contains(profile.scaleEngineID) && !["metalfx.spatial", "lanczos"].contains(profile.scaleEngineID) { return EnhancementText.t("This scaler is not connected to file playback yet.", "这个缩放引擎尚未接入文件播放。") }
         if profile.interpolationEnabled && !["apple.frc", "rife.metal", "apple.lowlatency", "distildrba.coreml"].contains(profile.interpolationEngineID) {
             return EnhancementText.t("This interpolation engine is not connected to file playback yet; current playback is unchanged.", "这个插帧引擎尚未接入文件播放，当前播放保持不变。")
         }

@@ -1526,7 +1526,7 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
                     if (!spPhaseFitsFloat(event.phase, phase)) { [phases removeAllObjects]; break; }
                     [phases addObject:@(phase)];
                 }
-                if (phases.count > 0 && phases.count <= 5) {
+                if (phases.count > 0 && phases.count <= 3) {
                     submitted = [engine submitPhasesWithFrameA:fa frameB:fb
                         ptsA:CMTimeMake(a.ptsUs, 1000000) ptsB:CMTimeMake(b.ptsUs, 1000000)
                         phases:phases sequential:NO token:token

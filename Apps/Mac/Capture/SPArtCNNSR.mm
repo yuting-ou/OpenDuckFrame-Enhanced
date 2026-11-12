@@ -178,7 +178,7 @@ static NSURL *SPArtModelURL(NSBundle *bundle, int features) {
             }
             return;
         }
-        vImage_Buffer src={(void *)bytes,(vImagePixelCount)h,(vImagePixelCount)w,half?(size_t)w*2:(size_t)w*4};
+        vImage_Buffer src={(void *)bytes,(vImagePixelCount)h,(vImagePixelCount)w,half?row*2:row*4};
         vImage_Buffer dst={dest,(vImagePixelCount)h,(vImagePixelCount)w,outPitch};
         vImage_Error convertError=half
             ? vImageConvert_Planar16FtoPlanar8(&src,&dst,kvImageNoFlags)
