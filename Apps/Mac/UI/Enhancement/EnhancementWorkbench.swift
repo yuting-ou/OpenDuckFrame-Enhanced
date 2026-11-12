@@ -2266,6 +2266,27 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         }
     }
 
+    private static let fpsLogURL: URL = {
+        let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs/OpenDuckFrame-Enhanced", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("fps.log")
+    }()
+    private static let fpsLogFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
+    }()
+    private func logFileFPS(fps: Double, coverage: Double, active: Bool, interpolating: Bool) {
+        let line = String(format: "%@,%.1f,%.0f,%d,%d\n", Self.fpsLogFormatter.string(from: Date()), fps, coverage * 100, active ? 1 : 0, interpolating ? 1 : 0)
+        guard let data = line.data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: Self.fpsLogURL) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: Self.fpsLogURL)
+        }
+    }
+
     @objc private func preferenceChanged(_ sender: NSSegmentedControl) {
         applySimplePreference(sender.selectedSegment)
     }
@@ -3182,6 +3203,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                     self.budgetLabel.stringValue = ""
                     let warning = player.workbenchMotionPlusStatus
                     self.updateSimpleEffect(interpolating: player.workbenchMotionPlusRequested, active: player.workbenchMotionPlusActive, coverage: player.workbenchInterpolationCoverage, awaitingScan: player.workbenchMotionPlusAwaitingScan, warning: warning)
+                    self.logFileFPS(fps: fps, coverage: player.workbenchInterpolationCoverage, active: player.workbenchMotionPlusActive, interpolating: player.workbenchMotionPlusRequested)
                     if !self.fileApplyError.isEmpty {
                         self.statusLabel.stringValue = self.fileApplyError
                         self.statusLabel.textColor = .systemOrange
@@ -4980,6 +5002,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                 self.fileApplyError = EnhancementText.t("File enhancement could not be applied; the previous plan remains.", "文件增强未能应用，保留原方案。")
                 self.statusLabel.stringValue = self.fileApplyError; self.statusLabel.textColor = .systemRed; return
             }
+            player.workbenchRefreshRenderingVisibility()
             var active = request
             active.outputDisplayID = self.fileApplied?.outputDisplayID ?? 0
             active.outputFullscreen = self.fileApplied?.outputFullscreen ?? false

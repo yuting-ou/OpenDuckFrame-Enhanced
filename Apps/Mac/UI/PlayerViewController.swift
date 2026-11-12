@@ -525,7 +525,10 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         ) { [weak self] note in
             guard let self, let w = note.object as? NSWindow else { return }
             let visible = w.occlusionState.contains(.visible)
-            self.core?.setWindowVisibleForRendering(visible)
+            // The workbench preview keeps consuming enhanced frames even when this
+            // player window is covered, so do not suspend rendering while it is active.
+            let workbenchConsuming = self.workbenchMotionPlusRequested || self.workbenchFileLanczosActive
+            self.core?.setWindowVisibleForRendering(visible || workbenchConsuming)
             if visible { self.runPendingDirectoryScanWhenFirstFramePresented() }
             else { self.scheduleQuietOpenPanelPrewarm() }
         })
@@ -3534,6 +3537,11 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
     }
     var workbenchInterpolationCoverage: Double { core?.frameInterpolationCoverage ?? 0 }
     var workbenchIsPlaying: Bool { core?.isPlaying ?? false }
+    func workbenchRefreshRenderingVisibility() {
+        guard let window = view.window else { return }
+        let visible = window.occlusionState.contains(.visible)
+        core?.setWindowVisibleForRendering(visible || workbenchMotionPlusRequested || workbenchFileLanczosActive)
+    }
     func workbenchTogglePlayback() { perform(.togglePlayback) }
 
     func setWorkbenchFPSOverlay(text: String, enabled: Bool) {
