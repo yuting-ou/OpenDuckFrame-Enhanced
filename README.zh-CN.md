@@ -5,6 +5,13 @@
 <p align="center"><a href="https://openduckframe.cn/">官网与使用指南</a> · <a href="README.md">English</a> · <b>简体中文</b></p>
 <p align="center">Apple 芯片 · macOS 14+ · <a href="LICENSE">MIT 开源</a></p>
 
+> **本仓库为二改增强版 OpenDuckFrame-Enhanced**，基于 [Jun-bao/OpenDuckFrame](https://github.com/Jun-bao/OpenDuckFrame)（MIT）二次开发，保留原作者署名与第三方声明。主要改动：
+> - **解锁 4K 文件插帧**：文件 RIFE 输入上限由 1920×1080 放宽至 3840×2160（Apple M2 Pro 实测 4K X2 满帧 50fps、覆盖 100%）。
+> - **新手友好工作台**：一键增强 + 「更流畅 / 自动 / 更清晰」三偏好自动配置；引擎、倍率、超分后端等高级参数默认折叠，老手展开全在。
+> - **秒插帧**：文件模式默认立即启动（无需 3 秒倒计时）；启动延迟 0–20 秒可设，0 = 立即。
+> - **插帧生效检测**：实时显示「生效中 / 未生效 / 等待关键帧」状态与生成帧覆盖率。
+> - **提前渲染可调**：`ODF_BUFFER_SECONDS` 环境变量调节前瞻缓冲秒数。
+
 补帧模型为 **ODF-VFI 四阶段精简版**，由 RIFE 4.25 做结构精简得到，沿用上游权重、未重新训练，模型处理开销更低。现有 RIFE 4.25 配置保持兼容并改用 ODF-VFI，加载时会校验实际四阶段权重；画质表现仍取决于素材。
 
 ## 简介

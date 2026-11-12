@@ -43,11 +43,11 @@ static CVPixelBufferRef SPFileRifeCreate(int w,int h,OSType format){
         CFTypeRef matrix=CVBufferCopyAttachment(sample,kCVImageBufferYCbCrMatrixKey,NULL);
         CFTypeRef pri=CVBufferCopyAttachment(sample,kCVImageBufferColorPrimariesKey,NULL),trc=CVBufferCopyAttachment(sample,kCVImageBufferTransferFunctionKey,NULL);
         BOOL hdr=trc&&(CFEqual(trc,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ)||CFEqual(trc,kCVImageBufferTransferFunction_ITU_R_2100_HLG));
-        BOOL valid=matrix&&pri&&trc&&!hdr&&w>=2&&h>=2&&w<=1920&&h<=1080&&!(w&1)&&!(h&1)&&
+        BOOL valid=matrix&&pri&&trc&&!hdr&&w>=2&&h>=2&&w<=3840&&h<=2160&&!(w&1)&&!(h&1)&&
             (f==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange||f==kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)&&
             CGRectEqualToRect(CVImageBufferGetCleanRect(sample),CGRectMake(0,0,w,h));
         if(matrix)CFRelease(matrix);if(pri)CFRelease(pri);if(trc)CFRelease(trc);
-        if(!valid){CVPixelBufferRelease(sample);completion(NO,@"文件 RIFE 需要完整 SDR 8 位 NV12 帧、已知色彩信息和最高 1920×1080 的偶数尺寸。");return;}
+        if(!valid){CVPixelBufferRelease(sample);completion(NO,@"文件 RIFE 需要完整 SDR 8 位 NV12 帧、已知色彩信息和最高 3840×2160 的偶数尺寸。");return;}
         if(![@[@"fast",@"balanced",@"hq"] containsObject:self->_quality]){CVPixelBufferRelease(sample);completion(NO,@"所选 RIFE 质量档位不可用。");return;}
         NSError *error=nil;SPRifeBridge *bridge=[[SPRifeBridge alloc] initWithResourceBundle:self->_resourceBundle];
         BOOL prepared=[bridge prepareModelID:self->_modelID quality:self->_quality width:w height:h error:&error];

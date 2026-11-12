@@ -72,7 +72,10 @@ static double spBudgetBufferSecondsRequested(bool *forced) {
     double seconds = 5.0;
     *forced = false;
 #if !SP_APP_STORE
-
+    if (const char *env = getenv("ODF_BUFFER_SECONDS")) {
+        const double v = atof(env);
+        if (v >= 0.5 && v <= 30.0) { seconds = v; *forced = true; }
+    }
 #endif
     return seconds;
 }

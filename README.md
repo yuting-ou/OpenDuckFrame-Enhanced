@@ -5,6 +5,13 @@
 <p align="center"><a href="https://openduckframe.cn/en/">Official website</a> · <b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
 <p align="center">Apple silicon · macOS 14+ · <a href="LICENSE">MIT</a></p>
 
+> **This is OpenDuckFrame-Enhanced, a community fork** of [Jun-bao/OpenDuckFrame](https://github.com/Jun-bao/OpenDuckFrame) (MIT). Original copyright and third-party notices are preserved. Changes:
+> - **Unlocked 4K file interpolation**: file RIFE input cap raised from 1920×1080 to 3840×2160 (verified 4K X2 at a full 50fps, 100% coverage on Apple M2 Pro).
+> - **Beginner-friendly workbench**: one-click enhance plus three auto-configuring preferences (Smoother / Auto / Clearer); advanced controls collapsed by default.
+> - **Instant start**: file mode starts immediately (no 3s countdown); start delay configurable 0–20s (0 = instant).
+> - **Interpolation health indicator**: live "working / not interpolating / awaiting keyframe" state with generated-frame coverage.
+> - **Tunable pre-render**: `ODF_BUFFER_SECONDS` environment variable adjusts the lookahead buffer.
+
 Frame generation uses **ODF-VFI**, a four-stage structural reduction of RIFE 4.25. It keeps the upstream weights without retraining and reduces model processing overhead. Existing RIFE 4.25 profiles remain compatible and run ODF-VFI; the app validates the actual four-stage weights when loading. Visual results remain content-dependent.
 
 ## About

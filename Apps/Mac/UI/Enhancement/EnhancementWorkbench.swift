@@ -90,7 +90,7 @@ private enum WorkbenchStyle {
             ("文件插帧运行中。", "File frame generation is active."),
             ("文件插帧需要已打开的 SDR 视频帧。", "Open an SDR video frame before applying frame generation."),
             ("文件插帧准备失败。", "File frame generation could not be prepared."),
-            ("文件 RIFE 需要完整 SDR 8 位 NV12 帧、已知色彩信息和最高 1920×1080 的偶数尺寸。", "File RIFE needs uncropped SDR 8-bit NV12, known color information, and even dimensions up to 1920×1080."),
+            ("文件 RIFE 需要完整 SDR 8 位 NV12 帧、已知色彩信息和最高 3840×2160 的偶数尺寸。", "File RIFE needs uncropped SDR 8-bit NV12, known color information, and even dimensions up to 3840×2160."),
             ("所选 RIFE 模型不可用。", "The selected RIFE model is unavailable."),
             ("所选 RIFE 质量档位不可用。", "The selected RIFE quality is unavailable."),
             ("RIFE 模型准备失败。", "RIFE model preparation failed."),
@@ -194,13 +194,17 @@ enum FPSPreference {
 
 enum EnhancementDelayPreference {
     private static let key = "OpenDuckFrameEnhancementDelaySeconds"
-    static let presets = [3, 5, 10]
+    static let presets = [0, 3, 5, 10]
     static func seconds(in defaults: UserDefaults) -> Int {
         guard defaults.object(forKey: key) != nil else { return 3 }
-        return min(20, max(1, defaults.integer(forKey: key)))
+        return min(20, max(0, defaults.integer(forKey: key)))
+    }
+    static func fileSeconds(in defaults: UserDefaults) -> Int {
+        guard defaults.object(forKey: key) != nil else { return 0 }
+        return min(20, max(0, defaults.integer(forKey: key)))
     }
     static func set(_ seconds: Int, in defaults: UserDefaults) {
-        defaults.set(min(20, max(1, seconds)), forKey: key)
+        defaults.set(min(20, max(0, seconds)), forKey: key)
     }
 }
 
@@ -1200,7 +1204,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private var settingsStack: NSStackView?
     private var experimentComparisonPanel: ExperimentComparisonPanel?
     private var experimentPanelAutoOpened = false
-    private let enhancementDelayControl = NSSegmentedControl(labels: ["3 s", "5 s", "10 s", "Custom"], trackingMode: .selectOne, target: nil, action: nil)
+    private let enhancementDelayControl = NSSegmentedControl(labels: ["立即", "3 s", "5 s", "10 s", "Custom"], trackingMode: .selectOne, target: nil, action: nil)
     private let enhancementDelayField = NSTextField(string: "3")
     private let enhancementDelayStepper = NSStepper()
     private let enhancementDelayCustomRow = NSStackView()
@@ -1210,6 +1214,13 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private let configActions = NSPopUpButton(frame: .zero, pullsDown: true)
     private var scaleBody: NSView?
     private var framesBody: NSView?
+    private var simplePreferenceControl: NSSegmentedControl?
+    private var simpleSummaryLabel: NSTextField?
+    private var simpleEffectLabel: NSTextField?
+    private var advancedContainer: NSView?
+    private var advancedToggleButton: NSButton?
+    private var advancedExpanded = false
+    private var lastKnownSourceSize: (Int, Int) = (0, 0)
     private var previewAspect: NSLayoutConstraint?
     private var formLabels: [(NSTextField, NSView, NSLayoutConstraint)] = []
     private var hasPendingFormChanges = false
@@ -2142,7 +2153,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             configActions.setAccessibilityLabel(EnhancementText.t("Manage configs", "管理配置"))
             let configControls = NSStackView(views: [configPopup, configActions])
             configControls.spacing = 4
-            items.append(row(EnhancementText.t("Config", "配置"), configControls))
+            let configRow = row(EnhancementText.t("Config", "配置"), configControls)
 
             let frameQuality = row(EnhancementText.t("Quality", "质量"), qualityPopup)
             interpolationQualityRow = frameQuality
@@ -2188,11 +2199,138 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                                 row(EnhancementText.t("Output size", "输出尺寸"), sizePopup),
                                 row("W×H", pair(widthField, heightField))])
             scaleBody = scale
-            items += [divider(), sectionHeader(EnhancementText.t("Frame generation", "帧生成"), interpolationSwitch), frames,
-                      divider(), sectionHeader(EnhancementText.t("Scale", "缩放 / 超分"), scaleSwitch), scale]
+            let advanced = column([configRow,
+                      divider(), sectionHeader(EnhancementText.t("Frame generation", "帧生成"), interpolationSwitch), frames,
+                      divider(), sectionHeader(EnhancementText.t("Scale", "缩放 / 超分"), scaleSwitch), scale], spacing: 12)
+            advanced.isHidden = !advancedExpanded
+            advancedContainer = advanced
+            items.append(buildSimplePanel())
+            let advToggle = button(advancedExpanded ? EnhancementText.t("Advanced ▾", "高级设置 ▾") : EnhancementText.t("Advanced ▸", "高级设置 ▸"), #selector(toggleAdvanced))
+            advancedToggleButton = advToggle
+            items.append(advToggle)
+            items.append(advanced)
         }
         if p0ControlsEnabled { items += [divider(), p0Controls()] }
         return column(items, spacing: 12)
+    }
+
+    private func buildSimplePanel() -> NSView {
+        let title = heading(EnhancementText.t("What effect do you want?", "你想要什么效果？"))
+        let pref = NSSegmentedControl(labels: [
+            EnhancementText.t("Smoother", "更流畅"),
+            EnhancementText.t("Auto", "自动"),
+            EnhancementText.t("Clearer", "更清晰")
+        ], trackingMode: .selectOne, target: self, action: #selector(preferenceChanged(_:)))
+        pref.segmentDistribution = .fillEqually
+        pref.selectedSegment = 1
+        pref.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        simplePreferenceControl = pref
+        let summary = NSTextField(wrappingLabelWithString: "")
+        summary.font = .systemFont(ofSize: 11)
+        summary.textColor = .secondaryLabelColor
+        summary.maximumNumberOfLines = 2
+        summary.preferredMaxLayoutWidth = WorkbenchStyle.inspectorWidth - 32
+        simpleSummaryLabel = summary
+        let effect = NSTextField(wrappingLabelWithString: "")
+        effect.font = .systemFont(ofSize: 12, weight: .semibold)
+        effect.maximumNumberOfLines = 2
+        effect.preferredMaxLayoutWidth = WorkbenchStyle.inspectorWidth - 32
+        effect.stringValue = EnhancementText.t("○ Interpolation idle", "○ 插帧待启动")
+        effect.textColor = .secondaryLabelColor
+        simpleEffectLabel = effect
+        let stack = column([title, pref, summary, effect], spacing: 8)
+        updateSimpleSummary()
+        return stack
+    }
+
+    private func updateSimpleEffect(interpolating: Bool, active: Bool, coverage: Double, awaitingScan: Bool, warning: String) {
+        guard let label = simpleEffectLabel else { return }
+        if !interpolating {
+            label.stringValue = EnhancementText.t("○ Interpolation off", "○ 插帧已关")
+            label.textColor = .secondaryLabelColor
+            return
+        }
+        if awaitingScan {
+            label.stringValue = EnhancementText.t("◌ Verifying video… seek back or replay", "◌ 正在确认视频…请回拖或重播")
+            label.textColor = .systemOrange
+            return
+        }
+        let pct = Int((coverage * 100).rounded())
+        if active && coverage > 0.001 {
+            label.stringValue = String(format: EnhancementText.t("● Interpolation working · coverage %d%%", "● 插帧生效中 · 覆盖率 %d%%"), pct)
+            label.textColor = .systemGreen
+        } else {
+            let reason = warning.isEmpty ? EnhancementText.t("passing through original frames", "正在直通原画") : EnhancementText.runtime(warning)
+            label.stringValue = EnhancementText.t("○ Not interpolating · ", "○ 插帧未生效 · ") + reason
+            label.textColor = .systemOrange
+        }
+    }
+
+    @objc private func preferenceChanged(_ sender: NSSegmentedControl) {
+        applySimplePreference(sender.selectedSegment)
+    }
+
+    @objc private func toggleAdvanced() {
+        advancedExpanded.toggle()
+        advancedContainer?.isHidden = !advancedExpanded
+        advancedToggleButton?.title = advancedExpanded ? EnhancementText.t("Advanced ▾", "高级设置 ▾") : EnhancementText.t("Advanced ▸", "高级设置 ▸")
+    }
+
+    private func sourcePixelSize() -> (Int, Int) {
+        var result: (Int, Int) = (0, 0)
+        if profile.sourceKind == "file", let s = selectedFilePlayer()?.workbenchSourceSize { result = s }
+        if result.0 == 0 {
+            let w = (lastStats["sourceWidth"] as? Int) ?? 0
+            let h = (lastStats["sourceHeight"] as? Int) ?? 0
+            result = (w, h)
+        }
+        if result.0 > 0 && result.1 > 0 { lastKnownSourceSize = result }
+        if result.0 == 0 { return lastKnownSourceSize }
+        return result
+    }
+
+    private func applySimplePreference(_ index: Int) {
+        let (w, h) = sourcePixelSize()
+        let is4K = w >= 3000 || h >= 1700
+        profile.interpolationEnabled = true
+        profile.interpolationEngineID = "rife.metal"
+        profile.modelID = "rife-v4.25"
+        profile.interpolationQuality = "fast"
+        switch index {
+        case 0:
+            profile.rate = .multiplier(is4K ? 2 : 3)
+            profile.scaleEnabled = false
+        case 2:
+            profile.rate = .multiplier(2)
+            profile.scaleEnabled = !is4K
+            profile.scaleEngineID = "metalfx.spatial"
+            if !is4K { profile.outputWidth = 0; profile.outputHeight = 0 }
+        default:
+            profile.rate = .multiplier(2)
+            profile.scaleEnabled = !is4K
+            profile.scaleEngineID = "lanczos"
+            if !is4K { profile.outputWidth = 0; profile.outputHeight = 0 }
+        }
+        LiveEngineSelection.normalize(&profile)
+        loadControls()
+        simplePreferenceControl?.selectedSegment = index
+        saveCurrentProfile()
+        updateSimpleSummary()
+        refreshActions()
+    }
+
+    private func updateSimpleSummary() {
+        let (w, h) = sourcePixelSize()
+        let is4K = w >= 3000 || h >= 1700
+        let pref = simplePreferenceControl?.selectedSegment ?? 1
+        let mult = (pref == 0 && !is4K) ? 3 : 2
+        let sizeText = w > 0 ? "\(w)×\(h)" : EnhancementText.t("source", "片源")
+        let scaleText: String
+        if is4K { scaleText = EnhancementText.t("4K already sharp · upscaling off", "4K 已够清晰 · 超分自动关") }
+        else if pref == 0 { scaleText = EnhancementText.t("upscaling off", "超分关") }
+        else { scaleText = EnhancementText.t("upscaling on", "超分开") }
+        let rateText = EnhancementText.t("frame rate ×", "帧率 ×") + "\(mult)"
+        simpleSummaryLabel?.stringValue = "\(sizeText) · \(rateText) · \(scaleText)"
     }
 
     private func p0Controls() -> NSView {
@@ -2640,7 +2778,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
 
     func controlTextDidChange(_ notification: Notification) {
         if let field = notification.object as? NSTextField, field === enhancementDelayField,
-           let seconds = Int(field.stringValue), (1...20).contains(seconds) {
+           let seconds = Int(field.stringValue), (0...20).contains(seconds) {
             enhancementDelayStepper.integerValue = seconds
         }
     }
@@ -2900,6 +3038,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                                       EnhancementText.t("Change File", "更换文件")][max(0, sourceKindControl.selectedSegment)]
         emptySourceButton?.title = choose
         updateSourceChrome(hasSource: hasSelectedSource)
+        updateSimpleSummary()
     }
 
     private func refreshActions() {
@@ -2917,7 +3056,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         } else if profile.sourceKind == "window" {
             startButton?.title = EnhancementText.t("Delayed Enhancement", "延迟增强")
         } else {
-            startButton?.title = filePreparing ? EnhancementText.t("Preparing…", "准备中…") : (countdown.active ? "\(countdown.remaining)" : (enhancing ? EnhancementText.t("Apply Changes", "应用更改") : EnhancementText.t("Start Enhancement", "开始增强")))
+            startButton?.title = filePreparing ? EnhancementText.t("Preparing…", "准备中…") : (countdown.active ? "\(countdown.remaining)" : (enhancing ? EnhancementText.t("Apply Changes", "应用更改") : EnhancementText.t("One-Click Enhance", "一键增强")))
         }
         stopButton?.isHidden = !enhancing && !filePreparing
     }
@@ -3042,6 +3181,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                     self.statsLabel.stringValue = [rate, coverage, lag].filter { !$0.isEmpty }.joined(separator: " · ")
                     self.budgetLabel.stringValue = ""
                     let warning = player.workbenchMotionPlusStatus
+                    self.updateSimpleEffect(interpolating: player.workbenchMotionPlusRequested, active: player.workbenchMotionPlusActive, coverage: player.workbenchInterpolationCoverage, awaitingScan: player.workbenchMotionPlusAwaitingScan, warning: warning)
                     if !self.fileApplyError.isEmpty {
                         self.statusLabel.stringValue = self.fileApplyError
                         self.statusLabel.textColor = .systemOrange
@@ -4079,8 +4219,9 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                 statusLabel.textColor = .systemRed; return
             }
         }
-        guard let ticket = countdown.begin() else { return }
-        startImmediatelyAfterPreparation = immediate
+        let delaySeconds = profile.sourceKind == "file" ? EnhancementDelayPreference.fileSeconds(in: .standard) : EnhancementDelayPreference.seconds(in: .standard)
+        guard let ticket = countdown.begin(seconds: max(1, delaySeconds)) else { return }
+        startImmediatelyAfterPreparation = immediate || delaySeconds == 0
         let selectedKind = profile.sourceKind
         let selectedGeneration = capture.currentGeneration
         countdownSourceGeneration = selectedKind == "file" ? nil : selectedGeneration
@@ -4525,12 +4666,12 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             enhancementDelayField.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
             enhancementDelayField.widthAnchor.constraint(equalToConstant: 48).isActive = true
             enhancementDelayField.delegate = self
-            enhancementDelayStepper.minValue = 1
+            enhancementDelayStepper.minValue = 0
             enhancementDelayStepper.maxValue = 20
             enhancementDelayStepper.increment = 1
             enhancementDelayStepper.target = self
             enhancementDelayStepper.action = #selector(enhancementDelayStepped)
-            let customLabel = NSTextField(labelWithString: EnhancementText.t("Seconds (1–20)", "秒数（1–20）"))
+            let customLabel = NSTextField(labelWithString: EnhancementText.t("Seconds (0–20, 0 = instant)", "秒数（0–20，0 = 立即）"))
             customLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
             enhancementDelayCustomRow.orientation = .horizontal
             enhancementDelayCustomRow.alignment = .centerY
@@ -4600,7 +4741,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
 
     private func refreshEnhancementDelayControls() {
         let seconds = EnhancementDelayPreference.seconds(in: .standard)
-        enhancementDelayControl.selectedSegment = enhancementDelayCustomSelected ? 3 : (EnhancementDelayPreference.presets.firstIndex(of: seconds) ?? 3)
+        enhancementDelayControl.selectedSegment = enhancementDelayCustomSelected ? 4 : (EnhancementDelayPreference.presets.firstIndex(of: seconds) ?? 1)
         enhancementDelayField.stringValue = String(seconds)
         enhancementDelayStepper.integerValue = seconds
         enhancementDelayCustomRow.isHidden = !enhancementDelayCustomSelected
@@ -4616,7 +4757,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     @objc private func enhancementDelayChanged() {
         let index = enhancementDelayControl.selectedSegment
         settingsWindow?.makeFirstResponder(nil)
-        enhancementDelayCustomSelected = index == 3
+        enhancementDelayCustomSelected = index == 4
         if enhancementDelayCustomSelected {
             refreshEnhancementDelayControls()
             settingsWindow?.makeFirstResponder(enhancementDelayField)
@@ -4637,7 +4778,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         }
         enhancementDelayControl.setLabel(EnhancementText.t("Custom", "自定义"), forSegment: 3)
         enhancementDelayControl.setAccessibilityLabel(EnhancementText.t("Countdown", "倒计时时间"))
-        enhancementDelayField.setAccessibilityLabel(EnhancementText.t("Custom countdown in seconds, 1 to 20", "自定义倒计时秒数，1 到 20"))
+        enhancementDelayField.setAccessibilityLabel(EnhancementText.t("Custom countdown in seconds, 0 to 20", "自定义倒计时秒数，0 到 20"))
         enhancementDelayStepper.setAccessibilityLabel(EnhancementText.t("Adjust countdown", "调整倒计时秒数"))
         languageDetail.isHidden = code == nil || code == "en" || code == "zh-Hans"
         languageControl.setLabel(EnhancementText.t("More…", "更多…"), forSegment: 2)
