@@ -31,6 +31,7 @@ esac
 SOURCE_BIN="$APP/Contents/MacOS/$APP_EXECUTABLE"
 LIBASS="$ROOT/ThirdParty/subtitles-min/lib/libass.9.dylib"
 SPARKLE_FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
+SPARKLE_ENABLED="${ODF_ENABLE_SPARKLE:-true}"
 LOCK="$ROOT/ThirdParty/deps.lock.json"
 DAV1D_STAMP="$ROOT/ThirdParty/dav1d-min/.build-stamp.json"
 SPEEX_STAMP="$ROOT/ThirdParty/speex-min/.build-stamp.json"
@@ -39,15 +40,19 @@ SUBTITLE_STAMP="$ROOT/ThirdParty/subtitles-min/.build-stamp.json"
 SPARKLE_STAMP="$ROOT/ThirdParty/sparkle-min/.build-stamp.json"
 
 [ -f "$SOURCE_BIN" ] || { echo "Main executable not found: $SOURCE_BIN" >&2; exit 1; }
-[ -d "$SPARKLE_FRAMEWORK" ] || {
-  echo "Sparkle.framework is missing from the direct-distribution build" >&2
-  exit 1
-}
+if [ "$SPARKLE_ENABLED" = "true" ]; then
+  [ -d "$SPARKLE_FRAMEWORK" ] || {
+    echo "Sparkle.framework is missing from the direct-distribution build" >&2
+    exit 1
+  }
+fi
 [ -f "$LIBASS" ] || {
   echo "Self-built libass is missing; refusing a Homebrew fallback. Run Scripts/build_subtitle_libs.sh first." >&2
   exit 1
 }
-for stamp in "$DAV1D_STAMP" "$SPEEX_STAMP" "$FFMPEG_STAMP" "$SUBTITLE_STAMP" "$SPARKLE_STAMP"; do
+DEPENDENCY_STAMPS=("$DAV1D_STAMP" "$SPEEX_STAMP" "$FFMPEG_STAMP" "$SUBTITLE_STAMP")
+if [ "$SPARKLE_ENABLED" = "true" ]; then DEPENDENCY_STAMPS+=("$SPARKLE_STAMP"); fi
+for stamp in "${DEPENDENCY_STAMPS[@]}"; do
   [ -f "$stamp" ] || { echo "Dependency build stamp is missing: $stamp" >&2; exit 1; }
 done
 
@@ -97,7 +102,7 @@ for update_key in SUFeedURL SUPublicEDKey SUEnableAutomaticChecks SPUpdateUsageE
                   SUVerifyUpdateBeforeExtraction SURequireSignedFeed; do
   /usr/bin/plutil -remove "$update_key" "$MAIN_INFO" >/dev/null 2>&1 || true
 done
-if [ -n "$SPARKLE_FEED_URL" ]; then
+if [ "$SPARKLE_ENABLED" = "true" ] && [ -n "$SPARKLE_FEED_URL" ]; then
   /usr/bin/plutil -insert SUFeedURL -string "$SPARKLE_FEED_URL" "$MAIN_INFO"
   /usr/bin/plutil -insert SUPublicEDKey -string "$SPARKLE_PUBLIC_ED_KEY" "$MAIN_INFO"
   /usr/bin/plutil -insert SUEnableAutomaticChecks -bool YES "$MAIN_INFO"
@@ -218,14 +223,17 @@ for appex in "$CLEAN_APP/Contents/PlugIns"/*.appex; do
   fi
 done
 
+MANIFEST_STAMPS=(
+  --stamp "dav1d=$DAV1D_STAMP"
+  --stamp "speex=$SPEEX_STAMP"
+  --stamp "ffmpeg=$FFMPEG_STAMP"
+  --stamp "subtitles=$SUBTITLE_STAMP"
+)
+if [ "$SPARKLE_ENABLED" = "true" ]; then MANIFEST_STAMPS+=(--stamp "sparkle=$SPARKLE_STAMP"); fi
 python3 "$ROOT/Scripts/lib/build_manifest.py" write \
   --app "$CLEAN_APP" \
   --lock "$LOCK" \
-  --stamp "dav1d=$DAV1D_STAMP" \
-  --stamp "speex=$SPEEX_STAMP" \
-  --stamp "ffmpeg=$FFMPEG_STAMP" \
-  --stamp "subtitles=$SUBTITLE_STAMP" \
-  --stamp "sparkle=$SPARKLE_STAMP"
+  "${MANIFEST_STAMPS[@]}"
 
 # Debug/Release host apps are intentionally unsandboxed. Do not pass the main
 # app's sandbox entitlements here; AppStore archives apply them in Xcode and do

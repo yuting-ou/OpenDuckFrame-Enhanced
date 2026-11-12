@@ -7,13 +7,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${1:?usage: verify_app_bundle.sh <path-to-OpenDuckFrame.app>}"
 LOCK="$ROOT/ThirdParty/deps.lock.json"
+SPARKLE_ENABLED="${ODF_ENABLE_SPARKLE:-true}"
 STAMPS=(
   --stamp "dav1d=$ROOT/ThirdParty/dav1d-min/.build-stamp.json"
   --stamp "speex=$ROOT/ThirdParty/speex-min/.build-stamp.json"
   --stamp "ffmpeg=$ROOT/ThirdParty/ffmpeg-min/.build-stamp.json"
   --stamp "subtitles=$ROOT/ThirdParty/subtitles-min/.build-stamp.json"
-  --stamp "sparkle=$ROOT/ThirdParty/sparkle-min/.build-stamp.json"
 )
+if [ "$SPARKLE_ENABLED" = "true" ]; then
+  STAMPS+=(--stamp "sparkle=$ROOT/ThirdParty/sparkle-min/.build-stamp.json")
+fi
 
 python3 "$ROOT/Scripts/lib/verify_app_bundle.py" \
   --app "$APP" \

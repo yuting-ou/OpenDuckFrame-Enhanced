@@ -34,6 +34,10 @@ settings. No microphone recording is used.
 
 ## Software updates
 
+This Enhanced fork builds without Sparkle by default and makes no update
+requests. The upstream behavior below applies only to builds that explicitly
+enable the updater with their own feed.
+
 Community downloads check the signed version feed at
 `https://jun-bao.github.io/OpenDuckFrame/appcast.xml` and download updates from
 `https://github.com/Jun-bao/OpenDuckFrame/releases`. These requests expose normal

@@ -52,9 +52,9 @@ block its first launch. Only allow it in System Settings → Privacy & Security 
 you trust the source. Updates may require granting Screen Recording or
 Accessibility access again because this community lane uses ad-hoc signing. Apple silicon and macOS 14+ are required.
 
-The app checks for signed updates and lets you choose when to install them.
-You can also use **OpenDuckFrame → Check for Updates**, or disable automatic
-checks from the same menu. Updating never uploads your media.
+This Enhanced build does not connect to the upstream update feed, so an
+upstream release cannot replace the enhanced features. Build enhanced versions
+from this repository instead.
 
 1. Open **File → Quality Workbench** (⇧⌘E).
 2. Choose a window, display, or video file input. macOS asks for Screen Recording

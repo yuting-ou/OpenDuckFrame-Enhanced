@@ -31,17 +31,25 @@ echo "==> Verifying/building minimal static FFmpeg (including dav1d and Speex)"
 ./Scripts/build_ffmpeg_min.sh
 echo "==> Verifying/building the self-contained subtitle stack"
 ./Scripts/build_subtitle_libs.sh
-echo "==> Verifying/building Sparkle for optional direct-distribution updates"
-./Scripts/build_sparkle.sh
+SPARKLE_ENABLED="${ODF_ENABLE_SPARKLE:-false}"
+if [ "$SPARKLE_ENABLED" = "true" ]; then
+  echo "==> Verifying/building Sparkle for direct-distribution updates"
+  ./Scripts/build_sparkle.sh
 
-SPARKLE_FEED_URL="${ODF_SPARKLE_FEED_URL-$(plutil -extract feedUrl raw -o - Distribution/sparkle.json)}"
-SPARKLE_PUBLIC_ED_KEY="${ODF_SPARKLE_PUBLIC_ED_KEY-$(plutil -extract publicKey raw -o - Distribution/sparkle.json)}"
-if { [ -n "$SPARKLE_FEED_URL" ] && [ -z "$SPARKLE_PUBLIC_ED_KEY" ]; } ||
-   { [ -z "$SPARKLE_FEED_URL" ] && [ -n "$SPARKLE_PUBLIC_ED_KEY" ]; }; then
-  echo "error: ODF_SPARKLE_FEED_URL and ODF_SPARKLE_PUBLIC_ED_KEY must be supplied together" >&2
-  exit 2
+  SPARKLE_FEED_URL="${ODF_SPARKLE_FEED_URL-$(plutil -extract feedUrl raw -o - Distribution/sparkle.json)}"
+  SPARKLE_PUBLIC_ED_KEY="${ODF_SPARKLE_PUBLIC_ED_KEY-$(plutil -extract publicKey raw -o - Distribution/sparkle.json)}"
+  if { [ -n "$SPARKLE_FEED_URL" ] && [ -z "$SPARKLE_PUBLIC_ED_KEY" ]; } ||
+     { [ -z "$SPARKLE_FEED_URL" ] && [ -n "$SPARKLE_PUBLIC_ED_KEY" ]; }; then
+    echo "error: ODF_SPARKLE_FEED_URL and ODF_SPARKLE_PUBLIC_ED_KEY must be supplied together" >&2
+    exit 2
+  fi
+else
+  # Enhanced fork: never inherit the upstream feed automatically. An upstream
+  # release must not replace this build; opt in explicitly with an own feed.
+  SPARKLE_FEED_URL=""
+  SPARKLE_PUBLIC_ED_KEY=""
 fi
-export ODF_ENABLE_SPARKLE=true
+export ODF_ENABLE_SPARKLE="$SPARKLE_ENABLED"
 export ODF_SPARKLE_FEED_URL="$SPARKLE_FEED_URL"
 export ODF_SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY"
 
