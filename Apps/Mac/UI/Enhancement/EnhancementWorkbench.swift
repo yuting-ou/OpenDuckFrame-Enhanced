@@ -2372,8 +2372,8 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private static let fpsLogFormatter: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
     }()
-    private func logFileFPS(fps: Double, coverage: Double, active: Bool, interpolating: Bool) {
-        let line = String(format: "%@,%.1f,%.0f,%d,%d\n", Self.fpsLogFormatter.string(from: Date()), fps, coverage * 100, active ? 1 : 0, interpolating ? 1 : 0)
+    private func logFileFPS(fps: Double, coverage: Double, active: Bool, interpolating: Bool, inputFPS: Double) {
+        let line = String(format: "%@,%.1f,%.0f,%d,%d,%.1f\n", Self.fpsLogFormatter.string(from: Date()), fps, coverage * 100, active ? 1 : 0, interpolating ? 1 : 0, inputFPS)
         guard let data = line.data(using: .utf8) else { return }
         if let handle = try? FileHandle(forWritingTo: Self.fpsLogURL) {
             defer { try? handle.close() }
@@ -3283,7 +3283,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                     self.budgetLabel.stringValue = ""
                     let warning = player.workbenchMotionPlusStatus
                     self.updateSimpleEffect(interpolating: player.workbenchMotionPlusRequested, active: player.workbenchMotionPlusActive, coverage: player.workbenchInterpolationCoverage, awaitingScan: player.workbenchMotionPlusAwaitingScan, warning: warning)
-                    self.logFileFPS(fps: fps, coverage: player.workbenchInterpolationCoverage, active: player.workbenchMotionPlusActive, interpolating: player.workbenchMotionPlusRequested)
+                    self.logFileFPS(fps: fps, coverage: player.workbenchInterpolationCoverage, active: player.workbenchMotionPlusActive, interpolating: player.workbenchMotionPlusRequested, inputFPS: player.workbenchInputEstimateFPS)
                     if !self.fileApplyError.isEmpty {
                         self.statusLabel.stringValue = self.fileApplyError
                         self.statusLabel.textColor = .systemOrange
