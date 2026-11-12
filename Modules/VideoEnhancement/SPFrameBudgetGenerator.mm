@@ -183,6 +183,14 @@ struct SPBudgetEmitStat { uint8_t covered = 0; uint8_t toggled = 0; float benefi
     SPFRCEngine *_engine;
     id<SPFileFrameProvider> _pendingFileProvider, _activeFileProvider;
     bool _fileProviderBusy, _fileProviderFailed;
+    int _fileProviderFailureCount;
+    int64_t _fileProviderRetryAtUs;
+    double _fileProviderLatencyMs;
+    int64_t _fileProviderLogUs;
+    int64_t _fileSourceLogUs;
+    uint64_t _fileProviderEpoch;
+    uint64_t _fileProviderBusyEpoch;
+    int64_t _fileProviderBusyDeadlineUs;
     int _engineState;
     uint64_t _engineEpoch;
     uint64_t _engineBuildSeq;
@@ -567,9 +575,18 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
     const int64_t runway = spBudgetRunwayUs(depth, (int64_t)llround(outputInterval)) - 10000;
     if (_activeFileProvider) {
         // A slow file model must not spend successive source-frame intervals
-        // blocking originals. Give this pair at most one output slot, within
-        // the queued runway; a late result is discarded by its pair state.
-        return std::max<int64_t>(0, std::min<int64_t>(runway, (int64_t)llround(outputInterval) - 2000));
+        // blocking originals, but a one-slot deadline makes a model whose
+        // latency sits near that boundary alternate between covered and
+        // skipped pairs. Use the measured latency (plus headroom) up to one
+        // source interval, still bounded by the queued runway.
+        const int64_t perSlot = std::max<int64_t>(0, (int64_t)llround(outputInterval) - 2000);
+        const int64_t sourceBound = std::max<int64_t>(0, (int64_t)llround(sourceInterval) - 2000);
+        int64_t desired = perSlot;
+        if (_fileProviderLatencyMs > 0) {
+            const int64_t latencyWait = (int64_t)llround(_fileProviderLatencyMs * 1250.0);
+            desired = std::max(perSlot, std::min(sourceBound, latencyWait));
+        }
+        return std::max<int64_t>(0, std::min<int64_t>(runway, desired));
     }
     const double latency = _engine ? _engine.latencyEstimateSec : 0.15;
     const int64_t remaining = e.submitUs + (int64_t)(latency * 1e6) - spNowUs() + 15000;
@@ -841,13 +858,28 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
         nextProvider = mode == SPFrameInterpolationModeOff ? nil : _pendingFileProvider;
         providerChanged = oldProvider != nextProvider;
         _activeFileProvider = nextProvider;
-        if (providerChanged) _fileProviderFailed = false;
+        if (providerChanged) {
+            _fileProviderFailed = false;
+            _fileProviderFailureCount = 0;
+            _fileProviderRetryAtUs = 0;
+            _fileProviderLatencyMs = 0;
+            _fileProviderEpoch++;
+            // Let the replaced provider's in-flight callback settle first;
+            // its completion clears the lane through the epoch check. If it
+            // never arrives, the deadline below still starts the new plan.
+            if (_fileProviderBusy) {
+                _fileProviderBusyDeadlineUs = spNowUs() + 1000000;
+            }
+        }
     }
     if (mode == SPFrameInterpolationModeOff || providerChanged) [self destroyEngine];
     if (oldProvider && oldProvider != nextProvider) [oldProvider invalidate];
     std::lock_guard<std::mutex> lock(_mtx);
     _emitterPaused = false;
     _cv.notify_all();
+    if (spDebug()) SPLOG(@"[BudgetReset] mode=%d old=%p next=%p changed=%d busy=%d failed=%d ring=%zu",
+                         (int)mode, oldProvider, nextProvider, providerChanged,
+                         _fileProviderBusy, _fileProviderFailed, _ring.size());
 }
 
 - (void)resumeAfterBackpressure {
@@ -1264,6 +1296,12 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
 
     if (probe && probeTex) CVPixelBufferRetain(buffer);
     _ring.push_back(std::move(entry));
+    if (spDebug() && fileProviderSelected && spNowUs() - _fileSourceLogUs > 1000000) {
+        _fileSourceLogUs = spNowUs();
+        SPLOG(@"[BudgetSource] pts=%.3f eligible=%d pair=%d prevPair=%d ring=%zu",
+              ptsUs / 1e6, eligible, pairCanSynthesize,
+              _ring.size() > 1 ? _ring[_ring.size() - 2].pair.eligible : 0, _ring.size());
+    }
     const bool ringNearlyFull = [self ringNearlyFullLocked];
     _cv.notify_all();
     lk.unlock();
@@ -1414,10 +1452,36 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
     std::unique_lock<std::mutex> lk(_mtx);
     id<SPFileFrameProvider> provider = _activeFileProvider;
     if (provider) {
-        if (_fileProviderBusy || _emitterPaused) return;
+        if (_emitterPaused) return;
+        if (_fileProviderBusy) {
+            const int64_t now = spNowUs();
+            if (_fileProviderBusyEpoch != _fileProviderEpoch &&
+                _fileProviderBusyDeadlineUs > 0 && now >= _fileProviderBusyDeadlineUs) {
+                // The replaced provider never reported back. Its callbacks are
+                // stale, so release the lane and let the new plan proceed.
+                _fileProviderBusy = false;
+                _fileProviderBusyDeadlineUs = 0;
+            } else {
+                if (spDebug() && spNowUs() - _fileProviderLogUs > 2000000) {
+                    _fileProviderLogUs = spNowUs();
+                    SPLOG(@"[BudgetTick] waiting busy=%d paused=%d ring=%zu provider=%p",
+                          _fileProviderBusy, _emitterPaused, _ring.size(), provider);
+                }
+                return;
+            }
+        }
         if (_fileProviderFailed) {
-            for (auto &entry:_ring) if(entry.pair.state==SPBudgetPairState::Idle)entry.pair.state=SPBudgetPairState::Skipped;
-            _cv.notify_all(); return;
+            // A single transient model failure must not disable interpolation
+            // for the rest of the session. Retry after a short cooldown, but
+            // stop after repeated failures so a broken engine cannot thrash.
+            const int64_t now = spNowUs();
+            if (_fileProviderFailureCount < 5 && now >= _fileProviderRetryAtUs) {
+                _fileProviderFailed = false;
+                _fileProviderRetryAtUs = 0;
+            } else {
+                for (auto &entry:_ring) if(entry.pair.state==SPBudgetPairState::Idle)entry.pair.state=SPBudgetPairState::Skipped;
+                _cv.notify_all(); return;
+            }
         }
         for (size_t i=0; i+1<_ring.size(); ++i) {
             SPBudgetEntry &a=_ring[i], &b=_ring[i+1];
@@ -1437,15 +1501,18 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
             auto preceding=a.preceding;
             CVPixelBufferRef fa=CVPixelBufferRetain(a.buffer),fb=CVPixelBufferRetain(b.buffer);
             const uint64_t token=a.seq, policy=a.epoch;const int64_t generation=a.generation, previousPTSUs=a.ptsUs, currentPTSUs=b.ptsUs;
+            if (spDebug()) SPLOG(@"[BudgetSubmit] token=%llu phases=%lu provider=%p",
+                                 (unsigned long long)token, (unsigned long)phases.count, provider);
             _fileProviderBusy=true;a.pair.state=SPBudgetPairState::InFlight;a.submitUs=spNowUs();
+            _fileProviderBusyEpoch=_fileProviderEpoch;_fileProviderBusyDeadlineUs=0;
             __weak SPFrameBudgetGenerator *weakSelf=self;
             lk.unlock();
             SPFRCPhasesCompletion done=^(uint64_t returned,NSArray<SPOwnedPixelBuffer *> *outputs,double latency,NSError *error){
-                (void)latency;SPFrameBudgetGenerator *strong=weakSelf;
+                SPFrameBudgetGenerator *strong=weakSelf;
                 if(!strong){CVPixelBufferRelease(fa);CVPixelBufferRelease(fb);return;}
                 dispatch_async(strong->_work,^{
                     CVPixelBufferRelease(fa);CVPixelBufferRelease(fb);
-                    [strong fileProviderCompleted:provider token:returned generation:generation policy:policy outputs:outputs error:error];
+                    [strong fileProviderCompleted:provider token:returned generation:generation policy:policy outputs:outputs error:error latency:latency];
                 });
             };
             BOOL submitted=needsPreceding
@@ -1453,7 +1520,7 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
                 : [provider submitPrevious:fa current:fb previousPTSUs:previousPTSUs currentPTSUs:currentPTSUs phases:phases token:token completion:done];
             if(!submitted){
                 CVPixelBufferRelease(fa);CVPixelBufferRelease(fb);
-                [self fileProviderCompleted:provider token:token generation:generation policy:policy outputs:nil error:[NSError errorWithDomain:@"OpenDuckFrame.FileProvider" code:1 userInfo:@{NSLocalizedDescriptionKey:@"文件插帧引擎无法接收任务。"}]];
+                [self fileProviderCompleted:provider token:token generation:generation policy:policy outputs:nil error:[NSError errorWithDomain:@"OpenDuckFrame.FileProvider" code:1 userInfo:@{NSLocalizedDescriptionKey:@"文件插帧引擎无法接收任务。"}] latency:0];
             }
             return;
         }
@@ -1646,30 +1713,58 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
     }
 }
 
-- (void)fileProviderCompleted:(id<SPFileFrameProvider>)provider token:(uint64_t)token generation:(int64_t)generation policy:(uint64_t)policy outputs:(NSArray<SPOwnedPixelBuffer *> *)outputs error:(NSError *)error {
-    BOOL current=NO, failed=NO, publishActive=NO;
+- (void)fileProviderCompleted:(id<SPFileFrameProvider>)provider token:(uint64_t)token generation:(int64_t)generation policy:(uint64_t)policy outputs:(NSArray<SPOwnedPixelBuffer*> *)outputs error:(NSError *)error latency:(double)latency {
+    BOOL failed=NO, publishActive=NO;
     {
         std::lock_guard<std::mutex> lock(_mtx);
-        _fileProviderBusy=false;
-        current=provider==_activeFileProvider;
-        if(current && generation==_live.generation->load() && policy==_live.policyEpoch->load()) {
-            // A deadline can retire the pair before its callback. A current
-            // provider's real failure must still be reported and stop retries.
-            if(error){_fileProviderFailed=true;_publishedActive=NO;failed=YES;}
-            for(auto &entry:_ring) {
-                if(entry.seq!=token || entry.generation!=generation || entry.epoch!=policy || entry.pair.state!=SPBudgetPairState::InFlight)continue;
-                size_t required=0;for(const auto &event:entry.scheduledBetween)if(event.action==SPScheduleAction::Interpolate)++required;
-                if(!error && required>0 && outputs.count==required){
-                    for(SPOwnedPixelBuffer *box in outputs)entry.generatedBetween.push_back(CVPixelBufferRetain(box.buffer));
-                    entry.pair.state=SPBudgetPairState::Ready;_counters.generated.fetch_add(required);_filledOnce=true;
-                    if(!_publishedActive){_publishedActive=YES;_publishedCode=static_cast<int>(SPInterpolationPolicyCode::Active);_lastStatusText=@"文件插帧运行中。";publishActive=YES;}
-                }else { entry.pair.state=SPBudgetPairState::Skipped;_fileProviderFailed=true;_publishedActive=NO;failed=YES; }
-                break;
+        if (provider != _activeFileProvider) {
+            // The replaced provider's late callback can release the lane only
+            // while no pair for the new provider has started. That preserves
+            // one in-flight pair across a plan switch without deadlocking on a
+            // provider that never reports back (the tick deadline covers that).
+            BOOL cleared=NO;
+            if (_fileProviderBusy && _fileProviderBusyEpoch != _fileProviderEpoch) {
+                _fileProviderBusy=false;_fileProviderBusyDeadlineUs=0;cleared=YES;
+            }
+            if (spDebug()) SPLOG(@"[BudgetDone] stale provider=%p active=%p token=%llu cleared=%d",
+                                 provider, _activeFileProvider, (unsigned long long)token, cleared);
+        } else {
+            _fileProviderBusy=false;
+            if (spDebug()) SPLOG(@"[BudgetDone] token=%llu latency=%.1fms error=%@",
+                                 (unsigned long long)token, latency * 1000.0,
+                                 error.localizedDescription ?: @"-");
+            if (latency > 0 && std::isfinite(latency)) {
+                const double ms = std::min(latency * 1000.0, 120000.0);
+                _fileProviderLatencyMs = _fileProviderLatencyMs > 0
+                    ? 0.8 * _fileProviderLatencyMs + 0.2 * ms : ms;
+            }
+            if (generation==_live.generation->load() && policy==_live.policyEpoch->load()) {
+                if(error){
+                    _fileProviderFailed=true;_fileProviderFailureCount++;
+                    _fileProviderRetryAtUs=spNowUs()+1000000;
+                    _publishedActive=NO;failed=YES;
+                }else{
+                    _fileProviderFailureCount=0;_fileProviderFailed=false;_fileProviderRetryAtUs=0;
+                }
+                for(auto &entry:_ring) {
+                    if(entry.seq!=token || entry.generation!=generation || entry.epoch!=policy || entry.pair.state!=SPBudgetPairState::InFlight)continue;
+                    size_t required=0;for(const auto &event:entry.scheduledBetween)if(event.action==SPScheduleAction::Interpolate)++required;
+                    if(!error && required>0 && outputs.count==required){
+                        for(SPOwnedPixelBuffer *box in outputs)entry.generatedBetween.push_back(CVPixelBufferRetain(box.buffer));
+                        entry.pair.state=SPBudgetPairState::Ready;_counters.generated.fetch_add(required);_filledOnce=true;
+                        if(!_publishedActive){_publishedActive=YES;_publishedCode=static_cast<int>(SPInterpolationPolicyCode::Active);_lastStatusText=@"文件插帧运行中。";publishActive=YES;}
+                    }else {
+                        entry.pair.state=SPBudgetPairState::Skipped;_fileProviderFailed=true;
+                        _fileProviderFailureCount++;_fileProviderRetryAtUs=spNowUs()+1000000;
+                        _publishedActive=NO;failed=YES;
+                    }
+                    break;
+                }
             }
         }
     }
     if(publishActive) [self publishStatus:@"文件插帧运行中。" active:YES code:static_cast<int>(SPInterpolationPolicyCode::Active)];
-    if(current && failed) [self publishStatus:error.localizedDescription ?: @"文件插帧没有返回结果。" active:NO code:static_cast<int>(SPInterpolationPolicyCode::EngineFailed)];
+    if(failed) [self publishStatus:error.localizedDescription ?: @"文件插帧没有返回结果。" active:NO code:static_cast<int>(SPInterpolationPolicyCode::EngineFailed)];
     _cv.notify_all();[self tick];
 }
 

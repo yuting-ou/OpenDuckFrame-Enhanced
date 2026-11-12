@@ -313,6 +313,11 @@ NS_SWIFT_UI_ACTOR
 - (void)prewarmWindowDragEffect;
 // Media information.
 - (NSDictionary *)mediaInfo;
+// Stable, display-ready descriptors for the compact source info strip.
+// Keys: codec (NSString, e.g. "HEVC"), depth (NSNumber, bits), hdr (NSString,
+// "SDR"/"HDR10"/"HLG"/"Dolby Vision…"), primaries (NSString, e.g. "BT.709").
+// Empty until a video session is open.
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *sourceFormatInfo;
 @property (nonatomic, readonly) BOOL isMuted;
 // A/B loop positions in seconds; -1 means unset.
 - (void)setLoopPointA:(double)sec;

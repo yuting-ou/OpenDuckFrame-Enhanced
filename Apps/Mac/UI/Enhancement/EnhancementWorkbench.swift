@@ -616,6 +616,28 @@ enum LiveEngineSelection {
     }
 }
 
+/// User-facing names for the stored RIFE quality identifiers.
+@MainActor
+enum InterpolationQualitySelection {
+    static let ids = ["fast", "balanced", "hq"]
+
+    static func id(at index: Int) -> String {
+        ids.indices.contains(index) ? ids[index] : ids[0]
+    }
+
+    static func index(_ id: String) -> Int {
+        ids.firstIndex(of: id) ?? 0
+    }
+
+    static func title(_ id: String) -> String {
+        switch id {
+        case "balanced": return EnhancementText.t("Balanced", "均衡")
+        case "hq": return EnhancementText.t("High Quality", "高画质")
+        default: return EnhancementText.t("Fast", "快速")
+        }
+    }
+}
+
 enum ArtCNNSRSelection {
     static let ids = ["artcnn.c4f32", "artcnn.c4f16"]
     static func contains(_ id: String) -> Bool { ids.contains(id) }
@@ -640,6 +662,15 @@ enum ArtCNNSRSelection {
 struct FileInterpolationPerformance: Equatable {
     let inferenceLongEdge: Int
     let bridgeCount: Int
+
+    /// The balanced/hq IFNet tiers run several times more pixels than fast and
+    /// do not reliably fit the 40 ms source-pair budget across supported Macs
+    /// (measured about 70 ms per 1920-wide pair on the debug pipeline), so file
+    /// playback runs the fast tier. Window and display capture still expose
+    /// every tier.
+    static func effectiveQuality(_ requested: String) -> String {
+        "fast"
+    }
 
     static func plan(rate: RateRequest, sourceWidth: Int, sourceHeight: Int) -> FileInterpolationPerformance {
         let longEdge = max(sourceWidth, sourceHeight)
@@ -1319,6 +1350,9 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private let diagnosticLabel = NSTextField(labelWithString: "")
     private let sourceStripLabel = NSTextField(labelWithString: "")
     private let sourceMetaLabel = NSTextField(labelWithString: "")
+    private let fileSourceSpecLabel = NSTextField(labelWithString: "")
+    private var lastFileSourceMeta = ""
+    private var lastFileSourceSpec = ""
     private var startButton: NSButton?
     private var stopButton: NSButton?
     private var sourceActionButton: NSButton?
@@ -1342,6 +1376,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private var pendingSourceGeneration: UInt64?
     private var liveApplyFailure = ""
     private var fileApplied: EnhancementProfile?
+    private var fileAppliedAt: TimeInterval = 0
     private var fileOutputToken: UInt64 = 0
     private weak var fileOutputPlayer: PlayerViewController?
     private var filePreparing = false
@@ -1969,12 +2004,17 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         sourceStripLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         sourceMetaLabel.font = WorkbenchStyle.captionFont
         sourceMetaLabel.textColor = .secondaryLabelColor
-        for label in [sourceStripLabel, sourceMetaLabel] {
-            label.lineBreakMode = .byTruncatingTail
+        fileSourceSpecLabel.font = .systemFont(ofSize: 11)
+        fileSourceSpecLabel.textColor = .tertiaryLabelColor
+        fileSourceSpecLabel.lineBreakMode = .byTruncatingTail
+        fileSourceSpecLabel.isHidden = true
+        for label in [sourceStripLabel, sourceMetaLabel, fileSourceSpecLabel] {
             label.allowsExpansionToolTips = true
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
-        let sourceText = NSStackView(views: [sourceStripLabel, sourceMetaLabel])
+        sourceStripLabel.lineBreakMode = .byTruncatingTail
+        sourceMetaLabel.lineBreakMode = .byTruncatingTail
+        let sourceText = NSStackView(views: [sourceStripLabel, sourceMetaLabel, fileSourceSpecLabel])
         sourceText.orientation = .vertical
         sourceText.alignment = .leading
         sourceText.spacing = 2
@@ -2382,9 +2422,21 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             return
         }
         let pct = Int((coverage * 100).rounded())
+        let settled = fileApplied != nil && fileAppliedAt > 0 &&
+            ProcessInfo.processInfo.systemUptime - fileAppliedAt > 3
         if active && coverage > 0.001 {
-            label.stringValue = String(format: EnhancementText.t("● Interpolation working · coverage %d%%", "● 插帧生效中 · 覆盖率 %d%%"), pct)
-            label.textColor = .systemGreen
+            if coverage < 0.5 {
+                if settled {
+                    label.stringValue = String(format: EnhancementText.t("● Frame generation is behind · coverage %d%%", "● 插帧算力不足 · 覆盖率 %d%%"), pct)
+                    label.textColor = .systemOrange
+                } else {
+                    label.stringValue = EnhancementText.t("◌ Starting frame generation…", "◌ 正在启动插帧…")
+                    label.textColor = .secondaryLabelColor
+                }
+            } else {
+                label.stringValue = String(format: EnhancementText.t("● Interpolation working · coverage %d%%", "● 插帧生效中 · 覆盖率 %d%%"), pct)
+                label.textColor = .systemGreen
+            }
         } else {
             let reason = warning.isEmpty ? EnhancementText.t("passing through original frames", "正在直通原画") : EnhancementText.runtime(warning)
             label.stringValue = EnhancementText.t("○ Not interpolating · ", "○ 插帧未生效 · ") + reason
@@ -3167,6 +3219,13 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     }
 
     private func refreshSourceBar() {
+        // Showing the workbench while a file is already playing must adopt its
+        // name; this path never passed through chooseFile or showFileEnhancement.
+        if profile.sourceKind == "file", activeSourceTitle.isEmpty,
+           let path = selectedFilePlayer()?.openMediaPath {
+            activeSourceTitle = (path as NSString).lastPathComponent
+            profile.sourceTitle = activeSourceTitle
+        }
         let text = hasSelectedSource ? activeSourceTitle : EnhancementText.t("No source", "未选择来源")
         sourceLabel.stringValue = text
         sourceStripLabel.stringValue = text
@@ -3182,11 +3241,103 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                                       EnhancementText.t("Change Display", "更换显示器"),
                                       EnhancementText.t("Change File", "更换文件")][max(0, sourceKindControl.selectedSegment)] : choose
         emptySourceButton?.title = choose
+        refreshFileSourceInfo()
         updateSourceChrome(hasSource: hasSelectedSource)
         updateSimpleSummary()
         if guideStep == .source && page == 0 {
             DispatchQueue.main.async { [weak self] in self?.showGuideStep() }
         }
+    }
+
+    /// Show the selected file's resolution, cadence and format beside its name.
+    /// Capture sources keep populating the same meta label from live stats.
+    private func refreshFileSourceInfo() {
+        guard profile.sourceKind == "file" else {
+            fileSourceSpecLabel.isHidden = true
+            if sourceMetaLabel.stringValue == lastFileSourceMeta {
+                sourceMetaLabel.stringValue = ""
+                sourceMetaLabel.isHidden = true
+            }
+            lastFileSourceMeta = ""
+            lastFileSourceSpec = ""
+            return
+        }
+        guard let player = selectedFilePlayer() else {
+            sourceMetaLabel.stringValue = ""
+            sourceMetaLabel.isHidden = true
+            fileSourceSpecLabel.isHidden = true
+            lastFileSourceMeta = ""
+            lastFileSourceSpec = ""
+            return
+        }
+        guard let info = player.workbenchSourceMediaInfo else {
+            let text = player.workbenchSourceIsAudioOnly
+                ? EnhancementText.t("Audio only · no video stream", "纯音频 · 无视频画面")
+                : EnhancementText.t("Reading media info…", "正在读取片源信息…")
+            if sourceMetaLabel.stringValue != text {
+                sourceMetaLabel.stringValue = text
+                sourceMetaLabel.isHidden = false
+            }
+            fileSourceSpecLabel.isHidden = true
+            lastFileSourceMeta = ""
+            lastFileSourceSpec = ""
+            return
+        }
+        let format = [info.codec, info.bitDepth > 0 ? "\(info.bitDepth)-bit" : "",
+                      info.hdr, info.primaries].filter { !$0.isEmpty }.joined(separator: " ")
+        let meta = "\(info.width)×\(info.height) · \(info.fpsText) fps · \(format)"
+        if meta != lastFileSourceMeta {
+            lastFileSourceMeta = meta
+            sourceMetaLabel.stringValue = meta
+            sourceMetaLabel.isHidden = false
+        }
+        let spec = fileSourceSpec(info)
+        if spec != lastFileSourceSpec {
+            lastFileSourceSpec = spec
+            fileSourceSpecLabel.stringValue = spec
+            fileSourceSpecLabel.isHidden = false
+        }
+    }
+
+    /// Actionable consequence of the source format: reachable cadences and
+    /// whether file super resolution applies.
+    private func fileSourceSpec(_ info: PlayerViewController.SourceMediaInfo) -> String {
+        var parts: [String] = []
+        if info.fps > 1 {
+            let x2 = Int((info.fps * 2).rounded())
+            let x3 = Int((info.fps * 3).rounded())
+            parts.append("\(EnhancementText.t("Interpolation", "插帧")) X2→\(x2) · X3→\(x3) · 60 · 120 fps")
+        }
+        if info.hdr != "SDR" || info.bitDepth > 8 {
+            parts.append(EnhancementText.t("Upscaling needs SDR 8-bit", "超分仅支持 SDR 8-bit"))
+        } else if info.width > 0, info.height > 0,
+                  info.width <= 1920, info.height <= 1080,
+                  info.width * 2 <= 3840, info.height * 2 <= 2160 {
+            parts.append("\(EnhancementText.t("Upscaling", "超分")) 2× → \(info.width * 2)×\(info.height * 2)")
+        } else {
+            parts.append(EnhancementText.t("Upscaling needs ≤1080p input", "超分需要 ≤1080p 输入"))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Whether the configured scaler can run on this file without rejecting
+    /// the whole plan. ArtCNN is limited to <=1080p input and 3840x2160 output;
+    /// the other file scalers need a real, even output size up to 4K.
+    private func fileScaleEligible(engine: String, source: (Int, Int),
+                                   outputWidth: Int, outputHeight: Int) -> Bool {
+        guard source.0 > 0, source.1 > 0 else { return false }
+        let targetWidth = outputWidth > 0 ? outputWidth : source.0 * 2
+        let targetHeight = outputHeight > 0 ? outputHeight : source.1 * 2
+        guard targetWidth > 0, targetHeight > 0,
+              targetWidth % 2 == 0, targetHeight % 2 == 0,
+              targetWidth <= 3840, targetHeight <= 2160 else { return false }
+        if ArtCNNSRSelection.contains(engine) {
+            return source.0 <= 1920 && source.1 <= 1080
+        }
+        if engine == "lanczos" || engine == "metalfx.spatial" {
+            return targetWidth > source.0 || targetHeight > source.1
+        }
+        return false
     }
 
     private func refreshActions() {
@@ -3257,7 +3408,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         enginePopup.addItems(withTitles: ["ODF-VFI"])
         enginePopup.target = self
         enginePopup.action = #selector(engineChanged)
-        qualityPopup.addItems(withTitles: ["fast", "balanced", "hq"])
+        qualityPopup.addItems(withTitles: InterpolationQualitySelection.ids.map(InterpolationQualitySelection.title))
         fpsPopup.addItems(withTitles: ["24", "25", "30", "50", "60", "90", "120", EnhancementText.t("Custom", "自定义")])
         scalePopup.addItems(withTitles: ArtCNNSRSelection.ids.map(ArtCNNSRSelection.title))
         scaleQualityPopup.addItems(withTitles: [EnhancementText.t("Off", "不降噪"), EnhancementText.t("Low", "轻度"), EnhancementText.t("Medium", "中等"), EnhancementText.t("Strong", "强")])
@@ -3320,6 +3471,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                 self?.outputPreview.refreshVisibilitySnapshot()
                 self?.updateTargetPanels()
                 self?.updateFPSOverlay()
+                self?.refreshFileSourceInfo()
                 guard let self, self.profile.sourceKind == "file" else { return }
                 let now = ProcessInfo.processInfo.systemUptime
                 guard now - self.lastFileStatsUpdate >= 1 else { return }
@@ -3345,6 +3497,10 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                         self.statusLabel.textColor = .labelColor
                     } else if player.workbenchMotionPlusRequested && player.workbenchMotionPlusAwaitingScan {
                         self.statusLabel.stringValue = EnhancementText.t("Waiting to verify the video. Seek backward or restart playback to reach a keyframe.", "正在确认视频，等待关键帧；可将进度拖回较早位置或重新播放。")
+                        self.statusLabel.textColor = .systemOrange
+                    } else if player.workbenchMotionPlusRequested && player.workbenchInterpolationCoverage < 0.5 &&
+                              self.fileApplied != nil && now - self.fileAppliedAt > 3 {
+                        self.statusLabel.stringValue = EnhancementText.t("Frame generation is behind; output fell back to the source rate. Lower the multiplier or keep Fast quality.", "插帧算力不足，输出已回落原帧率；请降低倍率或使用快速档。")
                         self.statusLabel.textColor = .systemOrange
                     } else if player.workbenchMotionPlusRequested && !warning.isEmpty {
                         self.statusLabel.stringValue = EnhancementText.runtime(warning)
@@ -5037,6 +5193,16 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         let useRife = request.interpolationEnabled && request.interpolationEngineID == "rife.metal"
         let useLowLatency = request.interpolationEnabled && request.interpolationEngineID == "apple.lowlatency"
         let useDistil = request.interpolationEnabled && request.interpolationEngineID == "distildrba.coreml"
+        let fileSource = player.workbenchSourceSize
+        let effectiveQuality = useRife
+            ? FileInterpolationPerformance.effectiveQuality(request.interpolationQuality)
+            : request.interpolationQuality
+        // A preset saved for another source size must not reject the whole
+        // plan (including interpolation) just because its scaler target is
+        // invalid for this file. Disable scaling for this file instead.
+        let effectiveScale = request.scaleEnabled && fileScaleEligible(
+            engine: request.scaleEngineID, source: fileSource,
+            outputWidth: request.outputWidth, outputHeight: request.outputHeight)
         fileApplyError = ""
         filePrepareToken &+= 1
         let token = filePrepareToken
@@ -5058,7 +5224,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                 self.statusLabel.stringValue = self.fileApplyError; self.statusLabel.textColor = .systemRed; return
             }
             self.applyingFileSettings = true
-            let committed = player.workbenchCommitFilePlan(interpolation: request.interpolationEnabled, rife: useRife || useLowLatency || useDistil, cadence: mode, numerator: numerator, denominator: denominator, scaler: request.scaleEnabled)
+            let committed = player.workbenchCommitFilePlan(interpolation: request.interpolationEnabled, rife: useRife || useLowLatency || useDistil, cadence: mode, numerator: numerator, denominator: denominator, scaler: effectiveScale)
             self.applyingFileSettings = false
             guard committed else {
                 player.workbenchCancelFileLanczosPreparation(); player.workbenchCancelFileRifePreparation()
@@ -5067,9 +5233,20 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             }
             player.workbenchRefreshRenderingVisibility()
             var active = request
+            active.interpolationQuality = effectiveQuality
+            active.scaleEnabled = effectiveScale
             active.outputDisplayID = self.fileApplied?.outputDisplayID ?? 0
             active.outputFullscreen = self.fileApplied?.outputFullscreen ?? false
-            self.fileApplied = active; self.persist(); self.refreshActions(); self.refreshPlanLabel()
+            self.fileApplied = active; self.fileAppliedAt = ProcessInfo.processInfo.systemUptime
+            self.persist(); self.refreshActions(); self.refreshPlanLabel()
+            if effectiveQuality != request.interpolationQuality || effectiveScale != request.scaleEnabled {
+                // Keep the visible settings equal to the plan actually running,
+                // so a later Apply does not silently reintroduce the failed one.
+                self.profile.interpolationQuality = effectiveQuality
+                self.profile.scaleEnabled = effectiveScale
+                self.loadControls()
+                self.persist()
+            }
             self.fileOutputToken &+= 1
             let outputToken = self.fileOutputToken
             self.fileOutputPlayer = player
@@ -5091,13 +5268,12 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         }
         func prepareScaler() {
             guard self.filePreparing, self.filePrepareToken == token else { return }
-            guard request.scaleEnabled else { finish(true, ""); return }
+            guard effectiveScale else { finish(true, ""); return }
             player.workbenchPrepareFileScaler(engine: request.scaleEngineID, variant: request.scaleQualityID, width: request.outputWidth, height: request.outputHeight, completion: finish)
         }
         if useRife {
-            let source = player.workbenchSourceSize
-            let performance = FileInterpolationPerformance.plan(rate: request.rate, sourceWidth: source.0, sourceHeight: source.1)
-            player.workbenchPrepareFileRife(modelID: request.modelID, quality: request.interpolationQuality,
+            let performance = FileInterpolationPerformance.plan(rate: request.rate, sourceWidth: fileSource.0, sourceHeight: fileSource.1)
+            player.workbenchPrepareFileRife(modelID: request.modelID, quality: effectiveQuality,
                                             inferenceLongEdge: performance.inferenceLongEdge,
                                             bridgeCount: performance.bridgeCount) { ready, message in
                 guard self.filePreparing, self.filePrepareToken == token else { return }
@@ -5127,7 +5303,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         let active = fileApplied ?? profile
         let interpolationActive = player?.workbenchMotionPlusRequested ?? false
         let mode: String
-        let interpolationName = active.interpolationEngineID == "rife.metal" ? "ODF-VFI · \(active.interpolationQuality)" : (active.interpolationEngineID == "apple.lowlatency" ? EnhancementText.t("Apple Low Latency", "Apple 低延迟") : (active.interpolationEngineID == "distildrba.coreml" ? "DistilDRBA" : "Apple FRC"))
+        let interpolationName = active.interpolationEngineID == "rife.metal" ? "ODF-VFI · \(InterpolationQualitySelection.title(active.interpolationQuality))" : (active.interpolationEngineID == "apple.lowlatency" ? EnhancementText.t("Apple Low Latency", "Apple 低延迟") : (active.interpolationEngineID == "distildrba.coreml" ? "DistilDRBA" : "Apple FRC"))
         switch active.rate {
         case .multiplier(let value): mode = interpolationActive ? "\(interpolationName) X\(value) · " + EnhancementText.t("Experimental", "实验") : EnhancementText.t("Motion+ off", "Motion+ 关闭")
         case let .fixedFPS(n, d): mode = interpolationActive ? "\(interpolationName) \(n)/\(d) FPS · " + EnhancementText.t("Experimental", "实验") : EnhancementText.t("Motion+ off", "Motion+ 关闭")
@@ -5266,7 +5442,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             let player = selectedFilePlayer()
             if player?.workbenchMotionPlusActive == true {
                 let selected = fileApplied ?? profile
-                let name = selected.interpolationEngineID == "rife.metal" ? "ODF-VFI · \(selected.interpolationQuality)" : "Apple FRC"
+                let name = selected.interpolationEngineID == "rife.metal" ? "ODF-VFI · \(InterpolationQualitySelection.title(selected.interpolationQuality))" : "Apple FRC"
                 live = EnhancementText.t("Active", "生效") + " " + name
             } else if player?.workbenchMotionPlusRequested == true {
                 live = EnhancementText.t("Preparing or waiting for compatible frames", "正在准备或等待兼容画面")
@@ -5414,8 +5590,14 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
 
     private func reloadQualityItems() {
         qualityPopup.removeAllItems()
-        qualityPopup.addItems(withTitles: ["fast", "balanced", "hq"])
-        qualityPopup.selectItem(at: ["fast": 0, "balanced": 1, "hq": 2][profile.interpolationQuality] ?? 0)
+        qualityPopup.addItems(withTitles: InterpolationQualitySelection.ids.map(InterpolationQualitySelection.title))
+        let fileMode = profile.sourceKind == "file"
+        qualityPopup.selectItem(at: fileMode ? 0 : InterpolationQualitySelection.index(profile.interpolationQuality))
+        qualityPopup.item(at: 1)?.isEnabled = !fileMode
+        qualityPopup.item(at: 2)?.isEnabled = !fileMode
+        qualityPopup.toolTip = fileMode
+            ? EnhancementText.t("File interpolation uses Fast to keep output stable. Window and display capture can still use Balanced or High Quality.", "文件插帧使用快速档以保证输出稳定；窗口/显示器采集仍可选择均衡或高画质。")
+            : nil
         qualityPopup.isHidden = false
         phaseLabel.isHidden = true
         compatibilityButton.isHidden = true
@@ -5458,7 +5640,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private func readControls() {
         profile.interpolationEnabled = interpolationSwitch.state == .on
         readEngineSelection()
-        profile.interpolationQuality = LiveEngineSelection.validQuality(qualityPopup.titleOfSelectedItem ?? "fast")
+        profile.interpolationQuality = LiveEngineSelection.validQuality(InterpolationQualitySelection.id(at: qualityPopup.indexOfSelectedItem))
         profile.sourceKind = ["window", "display", "file"][max(0, sourceKindControl.selectedSegment)]
         if rateMode.selectedSegment == 1 {
             profile.rate = .multiplier([2, 3, 4][max(0, multiplierControl.selectedSegment)])

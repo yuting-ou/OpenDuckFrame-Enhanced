@@ -649,6 +649,7 @@ static bool spFlacNativeMd5Wanted(const AVCodecParameters *par, spresil::FlacStr
     NSString *_hdrStaticDetail;
     NSString *_hdrCodecName;
     NSDictionary *_mediaInfoSnapshot;
+    NSDictionary *_sourceFormatInfo;
     BOOL _audioActive;
 
     std::atomic<int64_t> _audioEofDrainedGen;
@@ -4772,6 +4773,7 @@ static NSString *spCodecDisplayName(const std::string &name) {
 
 - (NSDictionary *)buildMediaInfoSnapshot {
     NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    _sourceFormatInfo = nil;
     if (_videoStreamIndex < 0) return d;
     const sp::StreamInfo &vs = _demuxer->streams()[_videoStreamIndex];
     d[NSLocalizedString(@"media.codec", nil)] = [NSString stringWithUTF8String:vs.codecLongName.c_str()];
@@ -4795,7 +4797,8 @@ static NSString *spCodecDisplayName(const std::string &name) {
     NSString *colorNames[] = {unspecified, @"BT.709", unspecified, unspecified, unspecified, @"BT.470BG",
                               @"SMPTE170M", @"SMPTE240M", unspecified, @"BT.2020"};
     int pri = vs.colorPrimaries;
-    d[NSLocalizedString(@"media.primaries", nil)] = (pri >= 0 && pri <= 9) ? colorNames[pri] : NSLocalizedString(@"media.value.unknown", nil);
+    NSString *primariesName = (pri >= 0 && pri <= 9) ? colorNames[pri] : NSLocalizedString(@"media.value.unknown", nil);
+    d[NSLocalizedString(@"media.primaries", nil)] = primariesName;
     NSString *trcNames[] = {unspecified, @"BT.709", unspecified, unspecified, unspecified, unspecified,
                             @"SMPTE170M", @"SMPTE240M", @"Linear", unspecified, unspecified, unspecified,
                             unspecified, unspecified, @"BT.2020-10", @"BT.2020-12", @"PQ (HDR10)", unspecified, @"HLG"};
@@ -4817,6 +4820,23 @@ static NSString *spCodecDisplayName(const std::string &name) {
     }
     d[NSLocalizedString(@"media.hdrFormat", nil)] = hdrFmt;
     _hdrDescription = hdrFmt;
+    NSString *compactPrimaries = @"";
+    switch (vs.colorPrimaries) {
+        case AVCOL_PRI_BT709:     compactPrimaries = @"BT.709"; break;
+        case AVCOL_PRI_BT2020:    compactPrimaries = @"BT.2020"; break;
+        case AVCOL_PRI_BT470BG:
+        case AVCOL_PRI_SMPTE170M: compactPrimaries = @"BT.601"; break;
+        case AVCOL_PRI_SMPTE240M: compactPrimaries = @"SMPTE240M"; break;
+        case AVCOL_PRI_SMPTE431:  compactPrimaries = @"P3-DCI"; break;
+        case AVCOL_PRI_SMPTE432:  compactPrimaries = @"P3-D65"; break;
+        default: break;
+    }
+    _sourceFormatInfo = @{
+        @"codec": spCodecDisplayName(vs.codecName) ?: @"",
+        @"depth": @(vs.colorBits),
+        @"hdr": hdrFmt,
+        @"primaries": compactPrimaries,
+    };
 
     {
         NSMutableArray<NSString *> *lines = [NSMutableArray array];
@@ -5001,6 +5021,7 @@ static constexpr double kSPResumeKeyframeMaxBackSec = 5.0;
     [_audioOnlyTimer invalidate];
     _audioOnlyTimer = nil;
     _mediaInfoSnapshot = nil;
+    _sourceFormatInfo = nil;
     _hdrDescription = nil;
     _decoderNamePub = nil;
     _hdrStaticDetail = nil;
@@ -5242,6 +5263,7 @@ static NSString *spLangDisplayName(const std::string &lang) {
 }
 - (NSInteger)currentSubtitleTrackIndex { return _currentSubtitleTrackPub; }
 - (NSString *)hdrDescription { return _hdrDescription; }
+- (NSDictionary<NSString *, id> *)sourceFormatInfo { return _sourceFormatInfo ?: @{}; }
 - (NSString *)hdrDetailDescription {
     if (!_hdrStaticDetail) return nil;
 

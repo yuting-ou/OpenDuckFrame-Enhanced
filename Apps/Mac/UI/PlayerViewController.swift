@@ -82,10 +82,42 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
     private let playerView = PlayerView()
     private var workbenchFPSPlate: NSView?
     private var workbenchFPSLabel: NSTextField?
+    private var workbenchSourceInfoPlate: NSView?
+    private var workbenchSourceInfoLabel: NSTextField?
+    private var workbenchSourceInfoText = ""
     private var workbenchCountdownPlate: NSView?
     private var workbenchCountdownLabel: NSTextField?
     private final class WorkbenchOverlayView: NSView {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    /// Display-ready source descriptors shown in the workbench source row and
+    /// the player's compact info plate.
+    struct SourceMediaInfo: Equatable {
+        let width: Int
+        let height: Int
+        let fps: Double
+        let codec: String
+        let bitDepth: Int
+        let hdr: String
+        let primaries: String
+
+        var fpsText: String {
+            guard fps > 0 else { return "—" }
+            if abs(fps - fps.rounded()) < 0.001 { return String(format: "%.0f", fps) }
+            if abs(fps * 100 - (fps * 100).rounded()) < 0.001 {
+                return String(format: "%.2f", fps)
+            }
+            return String(format: "%.3f", fps)
+        }
+
+        var summaryLine: String {
+            var parts = ["\(width)×\(height)", "\(fpsText) fps"]
+            let format = [codec, bitDepth > 0 ? "\(bitDepth)-bit" : "", hdr, primaries]
+                .filter { !$0.isEmpty }
+            if !format.isEmpty { parts.append(format.joined(separator: " ")) }
+            return parts.joined(separator: " · ")
+        }
     }
     private var core: SPPlayerCore?
     private let playbackSleep = SPPlaybackSleepController()
@@ -967,6 +999,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         if Self.dbg { NSLog("[Chrome] 显示") }
         chromePresenter?.show()
         playbackCursor?.setChromeHidden(false)
+        refreshWorkbenchSourceInfo()
         armHideTimer(after: 2.5)
     }
 
@@ -998,6 +1031,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         if Self.dbg { NSLog("[Chrome] 空闲隐藏") }
         chromePresenter?.hide()
         playbackCursor?.setChromeHidden(true)
+        refreshWorkbenchSourceInfo()
     }
 
     private func dismissControlsNow() {
@@ -1007,6 +1041,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         isControlBarVisible = false
         chromePresenter?.hide()
         playbackCursor?.setChromeHidden(true)
+        refreshWorkbenchSourceInfo()
     }
 
     private var clickCandidate: (origin: NSPoint, pointer: NSPoint)?
@@ -2391,6 +2426,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         if chromePresentation.shouldRevealControls {
             showControlsTemporarily()
         }
+        refreshWorkbenchSourceInfo()
         if state == .playing {
             let info = core.videoInfo
             if info.width > 0 && info.height > 0 {
@@ -3528,6 +3564,21 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
 
     var workbenchSourceSize: (Int, Int) { (Int(core?.videoInfo.width ?? 0), Int(core?.videoInfo.height ?? 0)) }
     var workbenchSourceFPS: Double { core?.videoInfo.fps ?? 0 }
+    var workbenchSourceIsAudioOnly: Bool { core?.audioOnlySession ?? false }
+    /// Nil until the open session reports a video stream and its format.
+    var workbenchSourceMediaInfo: SourceMediaInfo? {
+        guard hasMediaSession, let core else { return nil }
+        let info = core.videoInfo
+        guard info.width > 0, info.height > 0 else { return nil }
+        let format = core.sourceFormatInfo
+        let codec = format["codec"] as? String ?? ""
+        return SourceMediaInfo(
+            width: Int(info.width), height: Int(info.height), fps: info.fps,
+            codec: codec,
+            bitDepth: (format["depth"] as? NSNumber)?.intValue ?? 0,
+            hdr: format["hdr"] as? String ?? core.hdrDescription ?? "",
+            primaries: format["primaries"] as? String ?? "")
+    }
     var workbenchPresentedFPS: Double { core?.observedPhysicalOutputFPS ?? -1 }
     var workbenchInputEstimateFPS: Double { core?.observedInputFPS ?? -1 }
     var workbenchVideoDelayMs: Double { core?.observedVideoDelayMs ?? -1 }
@@ -3572,6 +3623,46 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         }
         workbenchFPSLabel?.stringValue = text
         workbenchFPSPlate?.isHidden = false
+    }
+
+    /// Refresh the compact source plate. It follows the chrome: visible while
+    /// controls are shown, so paused viewing stays clean.
+    private func refreshWorkbenchSourceInfo() {
+        guard hasMediaSession, let info = workbenchSourceMediaInfo else {
+            workbenchSourceInfoPlate?.isHidden = true
+            return
+        }
+        if workbenchSourceInfoPlate == nil {
+            let plate = WorkbenchOverlayView()
+            plate.wantsLayer = true
+            plate.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+            plate.layer?.cornerRadius = 6
+            plate.translatesAutoresizingMaskIntoConstraints = false
+            let label = NSTextField(labelWithString: "")
+            label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+            label.textColor = NSColor(white: 1, alpha: 0.8)
+            label.lineBreakMode = .byTruncatingTail
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            label.translatesAutoresizingMaskIntoConstraints = false
+            plate.addSubview(label)
+            view.addSubview(plate, positioned: .above, relativeTo: playerView)
+            NSLayoutConstraint.activate([
+                plate.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+                plate.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
+                plate.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 12),
+                label.leadingAnchor.constraint(equalTo: plate.leadingAnchor, constant: 8),
+                label.trailingAnchor.constraint(equalTo: plate.trailingAnchor, constant: -8),
+                label.topAnchor.constraint(equalTo: plate.topAnchor, constant: 4),
+                label.bottomAnchor.constraint(equalTo: plate.bottomAnchor, constant: -4),
+            ])
+            workbenchSourceInfoPlate = plate
+            workbenchSourceInfoLabel = label
+        }
+        if info.summaryLine != workbenchSourceInfoText {
+            workbenchSourceInfoText = info.summaryLine
+            workbenchSourceInfoLabel?.stringValue = info.summaryLine
+        }
+        workbenchSourceInfoPlate?.isHidden = !isControlBarVisible
     }
 
     func setWorkbenchCountdown(_ text: String, enabled: Bool) {
