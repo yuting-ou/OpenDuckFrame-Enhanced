@@ -1228,15 +1228,22 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
             if (!_ring.empty()) {
                 SPBudgetEntry &prev = _ring.back();
                 size_t phases = 0;
-                for (const auto &event : prev.scheduledBetween)
-                    if (event.action == SPScheduleAction::Interpolate) ++phases;
-                if (phases == 0 || phases > 3) {
-                    prev.pair.eligible = false;
-                    prev.pair.state = SPBudgetPairState::Skipped;
-                    if (phases > 3 && !_cadenceLimitReported) {
+                for (auto &event : prev.scheduledBetween) {
+                    if (event.action != SPScheduleAction::Interpolate) continue;
+                    if (phases < 4) { ++phases; continue; }
+                    // Keep the requested output cadence without a fifth model
+                    // pass: present the source picture at this slot instead.
+                    event.action = SPScheduleAction::Hold;
+                    event.phase = SPRational{0, 1};
+                    event.skipReason = SPScheduleSkipReason::Gap;
+                    if (!_cadenceLimitReported) {
                         _cadenceLimitReported = true;
                         reportCadenceLimit = true;
                     }
+                }
+                if (phases == 0) {
+                    prev.pair.eligible = false;
+                    prev.pair.state = SPBudgetPairState::Skipped;
                 }
             }
         }
@@ -1261,7 +1268,7 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
     _cv.notify_all();
     lk.unlock();
     if (reportCadenceLimit)
-        [self publishStatus:@"这一段原帧间隔需要超过 3 张插帧，已暂时保持原画面；可降低目标帧率。" active:YES code:static_cast<int>(SPInterpolationPolicyCode::Active)];
+        [self publishStatus:@"目标帧率超过当前模型预算，部分间隔以原画补齐。" active:YES code:static_cast<int>(SPInterpolationPolicyCode::Active)];
 
     if (probe && probeTex) {
         NSMutableArray *owners = [NSMutableArray array];
@@ -1421,7 +1428,7 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
                 float phase=0;if(!spPhaseFitsFloat(event.phase,phase)){[phases removeAllObjects];break;}
                 [phases addObject:@(phase)];
             }
-            if(phases.count==0 || phases.count>3){a.pair.state=SPBudgetPairState::Skipped;_cv.notify_all();continue;}
+            if(phases.count==0 || phases.count>4){a.pair.state=SPBudgetPairState::Skipped;_cv.notify_all();continue;}
             const bool needsPreceding=[provider respondsToSelector:@selector(requiresPrecedingSource)] && [provider requiresPrecedingSource];
             if (needsPreceding && (!a.preceding || a.preceding->ptsUs >= a.ptsUs ||
                 ![provider respondsToSelector:@selector(submitPreceding:previous:current:precedingPTSUs:previousPTSUs:currentPTSUs:phases:token:completion:)])) {
@@ -1519,7 +1526,7 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
                     if (!spPhaseFitsFloat(event.phase, phase)) { [phases removeAllObjects]; break; }
                     [phases addObject:@(phase)];
                 }
-                if (phases.count > 0 && phases.count <= 3) {
+                if (phases.count > 0 && phases.count <= 4) {
                     submitted = [engine submitPhasesWithFrameA:fa frameB:fb
                         ptsA:CMTimeMake(a.ptsUs, 1000000) ptsB:CMTimeMake(b.ptsUs, 1000000)
                         phases:phases sequential:NO token:token
@@ -1739,7 +1746,7 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
         code = static_cast<int>(SPInterpolationPolicyCode::Active);
     }
     if (_cadenceLimitReported) {
-        text = @"这一段原帧间隔需要超过 3 张插帧，已暂时保持原画面；可降低目标帧率。";
+        text = @"目标帧率超过当前模型预算，部分间隔以原画补齐。";
     }
     if (_publishedCode == code && _publishedActive == active && _lastStatusText && [_lastStatusText isEqualToString:text]) return;
     _publishedCode = code; _publishedActive = active; _lastStatusText = text;

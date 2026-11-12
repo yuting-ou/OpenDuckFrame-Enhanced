@@ -3463,9 +3463,10 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         return core.frameInterpolationMode == .doubleRate
     }
 
-    func workbenchPrepareFileRife(modelID: String, quality: String, completion: @escaping (Bool, String) -> Void) {
+    func workbenchPrepareFileRife(modelID: String, quality: String, inferenceLongEdge: Int, bridgeCount: Int, completion: @escaping (Bool, String) -> Void) {
         guard hasVideoSession, let core else { completion(false, "请先打开视频。"); return }
-        let provider = SPFileRifeEngine(modelID: modelID, quality: quality)
+        let provider = SPFileRifeEngine(modelID: modelID, quality: quality, resourceBundle: .main,
+                                        inferenceLongEdge: Int32(inferenceLongEdge), bridgeCount: Int32(bridgeCount))
         core.prepare(provider, completion: completion)
     }
     func workbenchPrepareFileLowLatency(completion: @escaping (Bool, String) -> Void) {
@@ -3491,7 +3492,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         guard hasVideoSession, let core else { completion(false, "请先打开视频。"); return }
         let sourceWidth = Int(core.videoInfo.width), sourceHeight = Int(core.videoInfo.height)
         let factor: Int
-        if ["anime4k", "realcugan", "artcnn.c4f16", "artcnn.c4f32"].contains(engine) { factor = 2 }
+        if ["anime4k", "realcugan", "artcnn.c4f16", "artcnn.c4f32", "metalfx.spatial"].contains(engine) { factor = 2 }
         else if engine == "apple.video-sr" && (width == 0 || height == 0) {
             guard let first = SPAppleVideoSR.readyScales(forWidth: Int32(sourceWidth), height: Int32(sourceHeight)).first else {
                 completion(false, "设备或当前输入不支持 Apple 视频超分。 "); return

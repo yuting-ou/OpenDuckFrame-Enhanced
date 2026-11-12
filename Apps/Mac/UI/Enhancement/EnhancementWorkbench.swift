@@ -81,7 +81,7 @@ private enum WorkbenchStyle {
             ("输出尺寸无效", "Invalid output size."),
             ("这台 Mac 不支持 Apple 帧率转换", "This Mac does not support Apple frame-rate conversion."),
             ("这台系统没有 Apple 低延迟插帧", "Apple low-latency interpolation is unavailable on this system."),
-            ("这一段原帧间隔需要超过 3 张插帧，已暂时保持原画面；可降低目标帧率。", "This source interval needs more than 3 interpolated frames, so the original is held; lower the target rate."),
+            ("目标帧率超过当前模型预算，部分间隔以原画补齐。", "The target rate exceeds the current model budget; some slots use the original picture."),
             ("文件缩放当前需要已打开的 SDR 视频。", "File scaling requires an open SDR video."),
             ("文件缩放需要已呈现的 SDR 8 位 NV12 视频帧。", "File scaling requires a presented SDR 8-bit NV12 frame."),
             ("文件缩放当前仅支持 SDR 的 8 位 NV12 视频。", "File scaling supports SDR 8-bit NV12 video only."),
@@ -632,6 +632,39 @@ enum ArtCNNSRSelection {
         }
         if ![0, 480, 720, 1080].contains(profile.srInputPreset) { profile.srInputPreset = 1080 }
         profile.scaleQualityID = "none"
+    }
+}
+
+/// Chooses a model input resolution and parallel-engine count that keeps the
+/// file pipeline inside the 40 ms source-pair budget on high-resolution media.
+struct FileInterpolationPerformance: Equatable {
+    let inferenceLongEdge: Int
+    let bridgeCount: Int
+
+    static func plan(rate: RateRequest, sourceWidth: Int, sourceHeight: Int) -> FileInterpolationPerformance {
+        let longEdge = max(sourceWidth, sourceHeight)
+        let highResolution = longEdge > 1920
+        var multiplier = 0
+        var targetFPS = 0.0
+        switch rate {
+        case .multiplier(let value): multiplier = value
+        case let .fixedFPS(numerator, denominator):
+            targetFPS = denominator > 0 ? Double(numerator) / Double(denominator) : 0
+        }
+        if highResolution {
+            if multiplier >= 4 { return .init(inferenceLongEdge: 1280, bridgeCount: 3) }
+            if multiplier == 3 { return .init(inferenceLongEdge: 1600, bridgeCount: 2) }
+            if multiplier == 2 { return .init(inferenceLongEdge: 1920, bridgeCount: 1) }
+            if targetFPS > 90 { return .init(inferenceLongEdge: 1024, bridgeCount: 4) }
+            if targetFPS > 0 { return .init(inferenceLongEdge: 1280, bridgeCount: 3) }
+            return .init(inferenceLongEdge: 1920, bridgeCount: 1)
+        }
+        if multiplier >= 4 { return .init(inferenceLongEdge: 1600, bridgeCount: 3) }
+        if multiplier == 3 { return .init(inferenceLongEdge: 0, bridgeCount: 2) }
+        if multiplier == 2 { return .init(inferenceLongEdge: 0, bridgeCount: 1) }
+        if targetFPS > 90 { return .init(inferenceLongEdge: 1280, bridgeCount: 3) }
+        if targetFPS > 0 { return .init(inferenceLongEdge: 1600, bridgeCount: 2) }
+        return .init(inferenceLongEdge: 0, bridgeCount: 1)
     }
 }
 
@@ -2406,24 +2439,39 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private func applySimplePreference(_ index: Int) {
         let (w, h) = sourcePixelSize()
         let is4K = w >= 3000 || h >= 1700
+        let isFile = profile.sourceKind == "file"
         profile.interpolationEnabled = true
         profile.interpolationEngineID = "rife.metal"
         profile.modelID = "rife-v4.25"
         profile.interpolationQuality = "fast"
         switch index {
         case 0:
-            profile.rate = .multiplier(is4K ? 2 : 3)
+            // X3 reaches 75 fps for both 1080p and 4K sources on Apple silicon.
+            profile.rate = .multiplier(3)
             profile.scaleEnabled = false
         case 2:
             profile.rate = .multiplier(2)
-            profile.scaleEnabled = !is4K
-            profile.scaleEngineID = "metalfx.spatial"
-            if !is4K { profile.outputWidth = 0; profile.outputHeight = 0 }
+            if is4K {
+                // 4K output cannot take a native 2x pass; keep the source sharp.
+                profile.scaleEnabled = false
+            } else {
+                profile.scaleEnabled = true
+                // File playback uses the packaged ArtCNN graph; live capture
+                // keeps the existing MetalFX path.
+                profile.scaleEngineID = isFile ? "artcnn.c4f16" : "metalfx.spatial"
+                profile.outputWidth = 0
+                profile.outputHeight = 0
+            }
         default:
+            // Auto stays real-time: frame generation only for file sources.
             profile.rate = .multiplier(2)
-            profile.scaleEnabled = !is4K
-            profile.scaleEngineID = "lanczos"
-            if !is4K { profile.outputWidth = 0; profile.outputHeight = 0 }
+            if isFile {
+                profile.scaleEnabled = false
+            } else {
+                profile.scaleEnabled = !is4K
+                profile.scaleEngineID = "lanczos"
+                if !is4K { profile.outputWidth = 0; profile.outputHeight = 0 }
+            }
         }
         LiveEngineSelection.normalize(&profile)
         loadControls()
@@ -2437,12 +2485,12 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         let (w, h) = sourcePixelSize()
         let is4K = w >= 3000 || h >= 1700
         let pref = simplePreferenceControl?.selectedSegment ?? 1
-        let mult = (pref == 0 && !is4K) ? 3 : 2
+        let mult = pref == 0 ? 3 : 2
         let sizeText = w > 0 ? "\(w)×\(h)" : EnhancementText.t("source", "片源")
         let scaleText: String
         if is4K { scaleText = EnhancementText.t("4K already sharp · upscaling off", "4K 已够清晰 · 超分自动关") }
-        else if pref == 0 { scaleText = EnhancementText.t("upscaling off", "超分关") }
-        else { scaleText = EnhancementText.t("upscaling on", "超分开") }
+        else if pref == 2 { scaleText = EnhancementText.t("upscaling on", "超分开") }
+        else { scaleText = EnhancementText.t("upscaling off", "超分关") }
         let rateText = EnhancementText.t("frame rate ×", "帧率 ×") + "\(mult)"
         simpleSummaryLabel?.stringValue = "\(sizeText) · \(rateText) · \(scaleText)"
     }
@@ -4941,7 +4989,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             fileApplyError = EnhancementText.t("The selected display is unavailable.", "所选显示器不可用。")
             statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
         }
-        guard !profile.scaleEnabled || ArtCNNSRSelection.contains(profile.scaleEngineID) else {
+        guard !profile.scaleEnabled || ArtCNNSRSelection.contains(profile.scaleEngineID) || ["metalfx.spatial", "lanczos"].contains(profile.scaleEngineID) else {
             fileApplyError = EnhancementText.t("This scaler is not connected to file playback yet.", "这个缩放引擎尚未接入文件播放。")
             statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
         }
@@ -4960,8 +5008,8 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             switch profile.rate {
             case .multiplier(let value): mode = value; numerator = 0; denominator = 1
             case .fixedFPS(let n, let d):
-                guard d > 0, n > 0, player.workbenchSourceFPS > 0, Double(n) / Double(d) <= player.workbenchSourceFPS * 3 + 0.01 else {
-                    fileApplyError = EnhancementText.t("For file playback choose a fixed rate up to 3× the source rate.", "文件固定帧率目前最多为来源帧率的 3 倍。")
+                guard d > 0, n > 0, player.workbenchSourceFPS > 0, Double(n) / Double(d) <= player.workbenchSourceFPS * 5 + 0.01 else {
+                    fileApplyError = EnhancementText.t("For file playback choose a fixed rate up to 5× the source rate.", "文件固定帧率目前最多为来源帧率的 5 倍。")
                     statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
                 }
                 mode = 1; numerator = n; denominator = d
@@ -5035,7 +5083,11 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             player.workbenchPrepareFileScaler(engine: request.scaleEngineID, variant: request.scaleQualityID, width: request.outputWidth, height: request.outputHeight, completion: finish)
         }
         if useRife {
-            player.workbenchPrepareFileRife(modelID: request.modelID, quality: request.interpolationQuality) { ready, message in
+            let source = player.workbenchSourceSize
+            let performance = FileInterpolationPerformance.plan(rate: request.rate, sourceWidth: source.0, sourceHeight: source.1)
+            player.workbenchPrepareFileRife(modelID: request.modelID, quality: request.interpolationQuality,
+                                            inferenceLongEdge: performance.inferenceLongEdge,
+                                            bridgeCount: performance.bridgeCount) { ready, message in
                 guard self.filePreparing, self.filePrepareToken == token else { return }
                 if ready { prepareScaler() } else { finish(false, message) }
             }

@@ -426,6 +426,7 @@ targets:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/FrameBudget.metallib
         basedOnDependencyAnalysis: true
     dependencies:
+      - sdk: Accelerate.framework
       - sdk: CoreMedia.framework
       - sdk: CoreVideo.framework
       - sdk: CoreGraphics.framework
