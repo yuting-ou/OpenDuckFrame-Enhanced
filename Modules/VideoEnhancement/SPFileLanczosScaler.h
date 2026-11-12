@@ -7,6 +7,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// It preserves the input's color attachments and never substitutes a different scaler.
 @interface SPFileLanczosScaler : NSObject
 - (nullable instancetype)initWithDevice:(id<MTLDevice>)device width:(int)width height:(int)height error:(NSError **)error;
+/// scaleLuma NO leaves the output luma plane unwritten for a caller that
+/// replaces it (for example ArtCNN); chroma is always scaled.
+- (nullable instancetype)initWithDevice:(id<MTLDevice>)device width:(int)width height:(int)height scaleLuma:(BOOL)scaleLuma error:(NSError **)error;
 - (BOOL)submit:(CVPixelBufferRef)source ptsUs:(int64_t)ptsUs completion:(void (^)(CVPixelBufferRef _Nullable, NSError * _Nullable))completion;
 - (BOOL)submit:(CVPixelBufferRef)source completion:(void (^)(CVPixelBufferRef _Nullable, NSError * _Nullable))completion;
 @property (nonatomic, readonly) int outputWidth;

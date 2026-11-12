@@ -11,7 +11,7 @@
 > - **Beginner-friendly workbench**: one-click enhance plus three preferences: Smoother (X3, interpolation only), Auto (X2, interpolation only), and Clearer (ArtCNN C4F16 + interpolation on 1080p, upscaling off on 4K). Advanced controls stay collapsed.
 > - **Instant start**: file mode starts immediately (no 3 s countdown); start delay configurable 0–20 s (0 = instant).
 > - **Interpolation health indicator**: live "working / not interpolating / awaiting keyframe" state with generated-frame coverage.
-> - **Faster super resolution**: ArtCNN now runs on the CoreML Neural Engine with vImage conversion; 1080p→4K C4F16 measures about 25 fps and C4F32 about 23.5 fps. Enabling super resolution and interpolation together reaches about 33 fps, below the X2 target; use interpolation alone for full rate.
+> - **Faster super resolution**: ArtCNN now runs on the CoreML Neural Engine with vImage conversion and skips the luma scale that the model overwrites; 1080p→4K takes about 23.3 ms for C4F16 and 30.7 ms for C4F32, sustaining a 25 fps source on its own. Enabling super resolution and interpolation together reaches about 34 fps, below the X2 target; use interpolation alone for full rate.
 > - **Tunable pre-render**: `ODF_BUFFER_SECONDS` environment variable adjusts the lookahead buffer.
 
 Frame generation uses **ODF-VFI**, a four-stage structural reduction of RIFE 4.25. It keeps the upstream weights without retraining and reduces model processing overhead. Existing RIFE 4.25 profiles remain compatible and run ODF-VFI; the app validates the actual four-stage weights when loading. Visual results remain content-dependent.

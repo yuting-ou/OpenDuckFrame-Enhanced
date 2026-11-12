@@ -86,7 +86,7 @@ static NSURL *SPArtModelURL(NSBundle *bundle, int features) {
             [self closeOnQueue]; return;
         }
         self->_provider=[[MLDictionaryFeatureProvider alloc] initWithDictionary:@{@"input":feature} error:&failure];
-        self->_chromaScaler=[[SPFileLanczosScaler alloc] initWithDevice:MTLCreateSystemDefaultDevice() width:width*2 height:height*2 error:&failure];
+        self->_chromaScaler=[[SPFileLanczosScaler alloc] initWithDevice:MTLCreateSystemDefaultDevice() width:width*2 height:height*2 scaleLuma:NO error:&failure];
         if (!self->_provider || !self->_chromaScaler) { [self closeOnQueue]; return; }
         // Compile/specialize the actual shape before accepting source frames.
         [self->_input getMutableBytesWithHandler:^(void *bytes, NSInteger size, NSArray<NSNumber *> *strides) {

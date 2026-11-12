@@ -13,17 +13,21 @@ static NSError *SPFileScaleError(NSInteger code, NSString *message) {
     MPSImageLanczosScale *_chroma;
     CVMetalTextureCacheRef _cache;
     int _width, _height;
+    BOOL _scaleLuma;
     std::atomic<bool> _busy;
 }
 
 - (instancetype)initWithDevice:(id<MTLDevice>)device width:(int)width height:(int)height error:(NSError **)error {
+    return [self initWithDevice:device width:width height:height scaleLuma:YES error:error];
+}
+- (instancetype)initWithDevice:(id<MTLDevice>)device width:(int)width height:(int)height scaleLuma:(BOOL)scaleLuma error:(NSError **)error {
     if (!(self = [super init])) return nil;
     _busy.store(false);
     if (!device || !MPSSupportsMTLDevice(device) || width < 2 || height < 2 || width > 3840 || height > 2160 || (width & 1) || (height & 1)) {
         if (error) *error = SPFileScaleError(1, @"设备不支持或输出尺寸无效（须为偶数，最高 3840×2160）。");
         return nil;
     }
-    _device = device; _width = width; _height = height;
+    _device = device; _width = width; _height = height; _scaleLuma = scaleLuma;
     _queue = [device newCommandQueue];
     _luma = [[MPSImageLanczosScale alloc] initWithDevice:device];
     _chroma = [[MPSImageLanczosScale alloc] initWithDevice:device];
@@ -75,6 +79,7 @@ static NSError *SPFileScaleError(NSInteger code, NSString *message) {
     const MTLPixelFormat pixelFormats[2] = { MTLPixelFormatR8Unorm, MTLPixelFormatRG8Unorm };
     BOOL valid = YES;
     for (size_t i=0; i<2; ++i) {
+        if (i == 0 && !_scaleLuma) continue;
         CVReturn a = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, _cache, source, NULL, pixelFormats[i], CVPixelBufferGetWidthOfPlane(source,i), CVPixelBufferGetHeightOfPlane(source,i), i, &refs[i]);
         CVReturn b = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, _cache, output, NULL, pixelFormats[i], CVPixelBufferGetWidthOfPlane(output,i), CVPixelBufferGetHeightOfPlane(output,i), i, &refs[i+2]);
         if (a != kCVReturnSuccess || b != kCVReturnSuccess || !refs[i] || !refs[i+2]) valid = NO;
@@ -86,11 +91,11 @@ static NSError *SPFileScaleError(NSInteger code, NSString *message) {
         completion(NULL, SPFileScaleError(5, @"无法创建缩放纹理或 GPU 命令。")); return YES;
     }
     CVPixelBufferRetain(source);
-    [_luma encodeToCommandBuffer:command sourceTexture:CVMetalTextureGetTexture(refs[0]) destinationTexture:CVMetalTextureGetTexture(refs[2])];
+    if (_scaleLuma) [_luma encodeToCommandBuffer:command sourceTexture:CVMetalTextureGetTexture(refs[0]) destinationTexture:CVMetalTextureGetTexture(refs[2])];
     [_chroma encodeToCommandBuffer:command sourceTexture:CVMetalTextureGetTexture(refs[1]) destinationTexture:CVMetalTextureGetTexture(refs[3])];
     CVMetalTextureRef r0=refs[0],r1=refs[1],r2=refs[2],r3=refs[3];
     [command addCompletedHandler:^(id<MTLCommandBuffer> done) {
-        CFRelease(r0); CFRelease(r1); CFRelease(r2); CFRelease(r3);
+        if(r0)CFRelease(r0);if(r1)CFRelease(r1);if(r2)CFRelease(r2);if(r3)CFRelease(r3);
         CVPixelBufferRelease(source);
         self->_busy.store(false);
         if (done.status == MTLCommandBufferStatusCompleted) completion(output, nil);
