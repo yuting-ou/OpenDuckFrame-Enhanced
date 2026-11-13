@@ -228,6 +228,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
 
     private var mediaList: [URL] = []
     private var currentMediaIndex = -1
+    private var episodeChip: SPChipButton?
     private var playlistScanGeneration: UInt64 = 0
     /// Last directory snapshot stays with the window across Previous/Next.
     /// The process-wide index coalesces physical listings across windows; this
@@ -1000,6 +1001,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         chromePresenter?.show()
         playbackCursor?.setChromeHidden(false)
         refreshWorkbenchSourceInfo()
+        refreshEpisodeChip()
         armHideTimer(after: 2.5)
     }
 
@@ -1032,6 +1034,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         chromePresenter?.hide()
         playbackCursor?.setChromeHidden(true)
         refreshWorkbenchSourceInfo()
+        refreshEpisodeChip()
     }
 
     private func dismissControlsNow() {
@@ -1042,6 +1045,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         chromePresenter?.hide()
         playbackCursor?.setChromeHidden(true)
         refreshWorkbenchSourceInfo()
+        refreshEpisodeChip()
     }
 
     private var clickCandidate: (origin: NSPoint, pointer: NSPoint)?
@@ -1728,6 +1732,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
 
         mediaList = [url]
         currentMediaIndex = 0
+        refreshEpisodeChip()
 
         externalSubtitleCandidates.removeAll()
         directoryAutoSubtitleCandidates.removeAll()
@@ -1865,6 +1870,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
             mediaList = list
             currentMediaIndex = 0
         }
+        refreshEpisodeChip()
 
         scheduleDirectorySubtitleRanking(snapshot, for: mediaURL,
                                          generation: generation,
@@ -2230,6 +2236,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         directorySnapshot = nil
         mediaList.removeAll(keepingCapacity: false)
         currentMediaIndex = -1
+        refreshEpisodeChip()
         externalSubtitleCandidates.removeAll()
         directoryAutoSubtitleCandidates.removeAll()
         activeExternalSubtitleURL = nil
@@ -2268,7 +2275,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
 #endif
         guard mediaList.count > 1 else { return }
         let next = (currentMediaIndex + 1) % mediaList.count
-        open(url: mediaList[next])
+        switchToMedia(mediaList[next])
     }
 
     func playPreviousMedia() {
@@ -2277,8 +2284,97 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
 #endif
         guard mediaList.count > 1 else { return }
         let prev = (currentMediaIndex - 1 + mediaList.count) % mediaList.count
-        open(url: mediaList[prev])
+        switchToMedia(mediaList[prev])
     }
+
+    /// The visible episode picker mirrors the naturally sorted directory
+    /// snapshot that already drives Previous/Next.
+    private func ensureEpisodeChip() -> SPChipButton {
+        if let chip = episodeChip { return chip }
+        let chip = SPChipButton(width: 104)
+        chip.target = self
+        chip.action = #selector(showEpisodeMenu(_:))
+        chip.translatesAutoresizingMaskIntoConstraints = false
+        chip.setContentCompressionResistancePriority(.required, for: .horizontal)
+        view.addSubview(chip, positioned: .above, relativeTo: playerView)
+        NSLayoutConstraint.activate([
+            chip.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            chip.topAnchor.constraint(equalTo: view.topAnchor, constant: 44),
+            chip.widthAnchor.constraint(equalToConstant: 104),
+            chip.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        chip.isHidden = true
+        episodeChip = chip
+        return chip
+    }
+
+    private func refreshEpisodeChip() {
+        guard hasMediaSession, mediaList.count > 1 else {
+            episodeChip?.isHidden = true
+            return
+        }
+        let chip = ensureEpisodeChip()
+        if chip.isHidden, isControlBarVisible, chip.superview === view {
+            // Chrome is installed after the first frame, so it can end up above
+            // this chip. Its transparent top strip would swallow the click even
+            // though the chip stays visible. Re-raise the chip while revealing.
+            view.addSubview(chip, positioned: .above, relativeTo: nil)
+        }
+        let index = min(max(currentMediaIndex, 0), mediaList.count - 1)
+        chip.setText("\(L("episode.picker.title")) \(index + 1)/\(mediaList.count)")
+        chip.toolTip = L("episode.picker.title")
+        chip.setAccessibilityLabel(L("episode.picker.title"))
+        chip.isHidden = !isControlBarVisible
+    }
+
+    @objc private func showEpisodeMenu(_ sender: SPChipButton) {
+        guard hasMediaSession, mediaList.count > 1 else { return }
+        let current = min(max(currentMediaIndex, 0), mediaList.count - 1)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        // Large folders must not build a menu with tens of thousands of rows.
+        let visibleLimit = 60
+        let lower = mediaList.count > visibleLimit
+            ? max(0, min(current - visibleLimit / 2, mediaList.count - visibleLimit))
+            : 0
+        let upper = min(mediaList.count, lower + visibleLimit)
+        if lower > 0 { menu.addItem(.separator()) }
+        for index in lower..<upper {
+            let item = NSMenuItem(title: "\(index + 1). \(Self.episodeTitle(for: mediaList[index]))",
+                                  action: #selector(selectEpisode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mediaList[index]
+            item.state = index == current ? .on : .off
+            menu.addItem(item)
+        }
+        if upper < mediaList.count { menu.addItem(.separator()) }
+        let anchor = menu.items.first { $0.state == .on } ?? menu.items.first
+        menu.popUp(positioning: anchor, at: NSPoint(x: 0, y: sender.bounds.minY - 6), in: sender)
+    }
+
+    private static func episodeTitle(for url: URL) -> String {
+        let name = url.deletingPathExtension().lastPathComponent
+        return name.count > 46 ? String(name.prefix(45)) + "…" : name
+    }
+
+    @objc private func selectEpisode(_ item: NSMenuItem) {
+        guard let url = item.representedObject as? URL else { return }
+        switchToMedia(url)
+    }
+
+    /// Switching inside the same window preserves playback surface, fullscreen
+    /// state and the active enhancement plan when the workbench is attached.
+    private func switchToMedia(_ url: URL) {
+        guard hasMediaSession, let current = openMediaPath,
+              url.standardizedFileURL.path != current else { return }
+        let workbench = EnhancementWorkbenchController.active
+        let reapply = workbenchMotionPlusRequested || workbenchFileLanczosActive
+            || (workbench?.hasAppliedFilePlan ?? false)
+        workbench?.noteEpisodeSwitch(from: self, to: url, reapply: reapply)
+        open(url: url)
+    }
+
+    var isOpeningMedia: Bool { core?.state == .opening }
 
     private var playlistFolderAccessRequestable: Bool {
 #if SP_APP_STORE
@@ -2427,6 +2523,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
             showControlsTemporarily()
         }
         refreshWorkbenchSourceInfo()
+        refreshEpisodeChip()
         if state == .playing {
             let info = core.videoInfo
             if info.width > 0 && info.height > 0 {

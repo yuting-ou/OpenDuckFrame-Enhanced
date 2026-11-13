@@ -1155,6 +1155,10 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         init(_ processor: SPLiveProcessor) { self.processor = processor }
     }
     static let shared = EnhancementWorkbenchController()
+    /// Set once the workbench exists. The player uses this weak hook to carry
+    /// the active file plan across an episode switch without creating the
+    /// workbench in standalone playback.
+    static private(set) weak var active: EnhancementWorkbenchController?
 #if ODF_AIR_BETA_DIAGNOSTIC
     private(set) static weak var betaInstance: EnhancementWorkbenchController?
     static var betaSessionRecordingEnabled: Bool {
@@ -1377,6 +1381,10 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private var liveApplyFailure = ""
     private var fileApplied: EnhancementProfile?
     private var fileAppliedAt: TimeInterval = 0
+    private weak var pendingEpisodePlayer: PlayerViewController?
+    private var pendingEpisodePath: String?
+    private var pendingEpisodePlan: EnhancementProfile?
+    private var pendingEpisodeAt: TimeInterval = 0
     private var fileOutputToken: UInt64 = 0
     private weak var fileOutputPlayer: PlayerViewController?
     private var filePreparing = false
@@ -1410,6 +1418,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                               backing: .buffered, defer: false)
         window.title = "OpenDuckFrame"
         super.init(window: window)
+        Self.active = self
 #if ODF_AIR_BETA_DIAGNOSTIC
         Self.betaInstance = self
 #endif
@@ -1644,6 +1653,70 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         showWorkbench()
         showNotice(EnhancementText.t("ODF-VFI is selected. Click Start Enhancement to apply it to this video.",
                                     "已选择 ODF-VFI。请点击开始增强后应用到此视频。"))
+    }
+
+    /// True while a file plan is actually running for the attached player.
+    /// The player consults this before an episode switch so a running plan is
+    /// carried across even if the transient core request flag already cleared.
+    var hasAppliedFilePlan: Bool { fileApplied != nil }
+
+    /// Called by the player before it replaces the current file in place. The
+    /// workbench waits for the new session, updates its source row, and
+    /// re-applies the plan that was running so X2/X3 continues into the next
+    /// episode instead of falling back to the plain file.
+    func noteEpisodeSwitch(from player: PlayerViewController, to url: URL, reapply: Bool) {
+        pendingEpisodePlayer = player
+        pendingEpisodePath = url.standardizedFileURL.path
+        pendingEpisodePlan = reapply ? (fileApplied ?? profile) : nil
+        pendingEpisodeAt = ProcessInfo.processInfo.systemUptime
+    }
+
+    private func servicePendingEpisodeSwitch() {
+        guard let player = pendingEpisodePlayer, let path = pendingEpisodePath else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - pendingEpisodeAt > 12 {
+            clearPendingEpisodeSwitch()
+            return
+        }
+        if player.openMediaPath != path {
+            if player.hasOpenMedia { clearPendingEpisodeSwitch() }
+            return
+        }
+        guard player.hasOpenMedia, !player.isOpeningMedia else { return }
+        let plan = pendingEpisodePlan
+        clearPendingEpisodeSwitch()
+        let url = URL(fileURLWithPath: path)
+        cancelCountdown()
+        capture.stop()
+        fileURL = url
+        profile.sourceKind = "file"
+        profile.sourceTitle = url.lastPathComponent
+        profile.sourceBundleIdentifier = ""
+        activeSourceKind = "file"
+        activeSourceBundle = ""
+        fileApplied = nil
+        showSourceTitle(url.lastPathComponent)
+        if let plan {
+            profile = plan
+            profile.sourceKind = "file"
+            profile.sourceTitle = url.lastPathComponent
+            profile.sourceBundleIdentifier = ""
+        }
+        loadControls()
+        persist()
+        if plan != nil {
+            applyFileRequest(skipOutputSwitch: true)
+        } else {
+            updateSimpleSummary()
+            refreshActions()
+        }
+    }
+
+    private func clearPendingEpisodeSwitch() {
+        pendingEpisodePlayer = nil
+        pendingEpisodePath = nil
+        pendingEpisodePlan = nil
+        pendingEpisodeAt = 0
     }
 
     func showPlaybackFailure(_ message: String) {
@@ -3471,6 +3544,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                 self?.outputPreview.refreshVisibilitySnapshot()
                 self?.updateTargetPanels()
                 self?.updateFPSOverlay()
+                self?.servicePendingEpisodeSwitch()
                 self?.refreshFileSourceInfo()
                 guard let self, self.profile.sourceKind == "file" else { return }
                 let now = ProcessInfo.processInfo.systemUptime
@@ -5144,7 +5218,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         refreshPlanLabel()
     }
 
-    private func applyFileRequest() {
+    private func applyFileRequest(skipOutputSwitch: Bool = false) {
         LiveEngineSelection.normalize(&profile)
         guard let player = selectedFilePlayer() else {
             fileApplyError = EnhancementText.t("Open a video before applying file settings.", "请先打开视频，再应用文件设置。")
@@ -5246,6 +5320,16 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                 self.profile.scaleEnabled = effectiveScale
                 self.loadControls()
                 self.persist()
+            }
+            if skipOutputSwitch {
+                // Episode switching keeps the player exactly where it is,
+                // including a user-entered fullscreen space. Reapplying the
+                // saved output mode here could try to leave that space.
+                self.fileApplyError = ""
+                self.statusLabel.stringValue = self.fileStatus()
+                self.statusLabel.textColor = .secondaryLabelColor
+                self.refreshActions(); self.refreshPlanLabel(); self.updateSimpleSummary()
+                return
             }
             self.fileOutputToken &+= 1
             let outputToken = self.fileOutputToken
