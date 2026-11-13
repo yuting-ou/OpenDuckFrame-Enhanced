@@ -48,6 +48,7 @@ FOUNDATION_EXPORT BOOL SPLiveCanPrepareMetalFX(int width, int height);
 FOUNDATION_EXPORT BOOL SPAirBetaEnabled(void);
 FOUNDATION_EXPORT NSSize SPAirBetaProcessingSize(int captureWidth, int captureHeight);
 FOUNDATION_EXPORT NSString *_Nullable SPAirBetaSizingReason(int captureWidth, int captureHeight);
+FOUNDATION_EXPORT BOOL SPWindowNativeFits(double taskMs, double refreshHz);
 
 /// Synchronous spatial scaler. Callers serialize access on their own worker queue.
 @interface SPSpatialScaler : NSObject
@@ -95,6 +96,8 @@ FOUNDATION_EXPORT NSString *_Nullable SPAirBetaSizingReason(int captureWidth, in
 @property (nonatomic, copy) NSString *qualityID;
 /// Opt-in RIFE live stream cache. Other engines and file playback are unaffected.
 @property (nonatomic) BOOL rifeStreamEnabled;
+/// Opt-in visible 24/25/30 FPS estimation and retiming for live Apple low latency.
+@property (nonatomic) BOOL automaticVideoCadence;
 @end
 
 @interface SPLiveResolvedPlan : NSObject

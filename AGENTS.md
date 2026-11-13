@@ -32,9 +32,15 @@ Contribution and release requirements live in [CONTRIBUTING.md](CONTRIBUTING.md)
 ## Product boundaries
 
 Processing is local. Preserve user media, source permissions, profiles and playback state.
-The visible frame-generation choice is ODF-VFI, the four-stage structural reduction of RIFE 4.25 using upstream weights without retraining. The internal `rife-v4.25` profile and resource identifiers remain for compatibility. Existing backend and experiment code has a wider scope.
+The workbench offers ODF-VFI, Apple low-latency interpolation and Apple frame-rate conversion (FRC). ODF-VFI remains the default and is a four-stage structural reduction of RIFE 4.25 using upstream weights without retraining. The internal `rife-v4.25` profile and resource identifiers remain for compatibility. Existing backend and experiment code has a wider scope.
 Automatic hardware/configuration detection is deferred. Keep new recommendations or automatic tuning within an explicit task.
 Preserve internal SP symbols and existing interfaces unless the task calls for their migration.
+
+## Hardware optimization scope
+
+Optimize the product for supported devices, not for the owner's particular computer. A personal test machine is a validation sample, not a product requirement. Do not add per-owner performance recipes, device-model whitelists or fixed capture/processing sizes copied from that machine's screen.
+Use shared processing paths and capability-based limits: actual input geometry, available APIs, memory budgets and measured processing/presentation performance. Genuine platform compatibility restrictions must follow documented API requirements; keep them separate from performance tuning. Do not fix an existing device-specific optimization merely by adding another model identifier to its whitelist.
+Keep performance and quality claims limited to the hardware, inputs and settings actually tested. One successful device test does not establish support or stable FPS for a whole chip family. These rules guide future changes; they do not authorize unrelated removal or refactoring of existing optimizations.
 
 ## Git collaboration
 
