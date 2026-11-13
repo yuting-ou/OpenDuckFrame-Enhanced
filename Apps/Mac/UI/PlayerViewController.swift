@@ -3825,7 +3825,9 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
             view.addSubview(plate, positioned: .above, relativeTo: playerView)
             NSLayoutConstraint.activate([
                 plate.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-                plate.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
+                // Clear the full-size-content titlebar: the window title draws
+                // over the video at the same height as a 12 pt top anchor.
+                plate.topAnchor.constraint(equalTo: view.topAnchor, constant: 40),
                 label.leadingAnchor.constraint(equalTo: plate.leadingAnchor, constant: 8),
                 label.trailingAnchor.constraint(equalTo: plate.trailingAnchor, constant: -8),
                 label.topAnchor.constraint(equalTo: plate.topAnchor, constant: 4),

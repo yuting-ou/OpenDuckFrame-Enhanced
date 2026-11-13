@@ -616,8 +616,11 @@ final class SPChipButton: NSButton {
         didSet { positionLamp(); positionReadout() }
     }
 
-    /// Digits for the clear run at `range` of the full title. `nil` removes them.
-    func setReadout(_ text: String?, range: NSRange, color: NSColor, animated: Bool) {
+    /// Digits for the clear run at `range` of the full title. `nil` removes
+    /// them. The optional suffix is drawn inside the same overlay label right
+    /// after the digits, so the pair moves as one unit.
+    func setReadout(_ text: String?, range: NSRange, color: NSColor, animated: Bool,
+                    suffix: String? = nil, suffixColor: NSColor? = nil) {
         guard let text, range.location != NSNotFound, let layer else {
             readoutText = ""
             readoutRange = NSRange(location: NSNotFound, length: 0)
@@ -633,6 +636,12 @@ final class SPChipButton: NSButton {
             label.updateContentsScale(window?.backingScaleFactor ?? 2)
             layer.addSublayer(label)
             readoutLabel = label
+        }
+        label.contentLeads = true
+        if let suffix, !suffix.isEmpty {
+            label.setSuffix(suffix, color: suffixColor ?? color)
+        } else {
+            label.setSuffix(nil, color: color)
         }
         let previous = readoutText
         readoutText = text
@@ -663,7 +672,7 @@ final class SPChipButton: NSButton {
         let height = ceil(Self.readoutFont.ascender - Self.readoutFont.descender)
         label.isHidden = false
         label.frame = CGRect(x: minX + prefix, y: bounds.midY - height / 2,
-                             width: digits, height: height)
+                             width: digits + label.suffixWidth, height: height)
         label.relayoutSlots()
     }
 
@@ -1130,6 +1139,19 @@ final class SPRollingDigitLabel: CALayer {
     private var widthCache: [Character: CGFloat] = [:]
     private let font: NSFont
     private let fontSize: CGFloat
+    // Unit suffix ("fps") drawn right after the digits inside this label, so
+    // digits and unit move as one layer and cannot drift apart across the two
+    // text systems that lay out the chip.
+    private var suffixLayer: CATextLayer?
+    private var suffixText = ""
+    private(set) var suffixWidth: CGFloat = 0
+    private static let suffixFontSize: CGFloat = 9
+    private var suffixFont: NSFont {
+        NSFont.monospacedDigitSystemFont(ofSize: Self.suffixFontSize, weight: .semibold)
+    }
+    /// When true, digits start at the leading edge instead of centering within
+    /// the bounds; the suffix then sits directly after the last digit.
+    var contentLeads = false
 
     init(fontSize: CGFloat = 9.5, weight: NSFont.Weight = .semibold, slots slotCount: Int = 4) {
         self.fontSize = fontSize
@@ -1163,6 +1185,36 @@ final class SPRollingDigitLabel: CALayer {
 
     func updateContentsScale(_ scale: CGFloat) {
         for s in slots { s.a.contentsScale = scale; s.b.contentsScale = scale }
+        suffixLayer?.contentsScale = scale
+    }
+
+    /// Attach or clear the trailing unit drawn inside this label.
+    func setSuffix(_ text: String?, color: NSColor) {
+        guard let text, !text.isEmpty else {
+            suffixLayer?.removeFromSuperlayer()
+            suffixLayer = nil
+            suffixText = ""
+            suffixWidth = 0
+            return
+        }
+        let layer: CATextLayer
+        if let suffixLayer {
+            layer = suffixLayer
+        } else {
+            layer = CATextLayer()
+            layer.actions = ["position": NSNull(), "bounds": NSNull(),
+                             "transform": NSNull(), "opacity": NSNull(),
+                             "foregroundColor": NSNull(), "contents": NSNull()]
+            addSublayer(layer)
+            suffixLayer = layer
+        }
+        let font = suffixFont
+        layer.font = font
+        layer.fontSize = font.pointSize
+        layer.string = text
+        layer.foregroundColor = color.cgColor
+        suffixText = text
+        suffixWidth = (text as NSString).size(withAttributes: [.font: font]).width
     }
 
     private func advance(_ ch: Character) -> CGFloat {
@@ -1181,8 +1233,6 @@ final class SPRollingDigitLabel: CALayer {
         let prevChars = Array(prev)
         let widths = chars.map { advance($0) }
         let total = widths.reduce(0, +)
-        var x = (bounds.width - total) / 2
-        let h = bounds.height
         // Right-align differences against the percent sign.
         let lenDelta = chars.count - prevChars.count
         var changedFromRight: [Int] = [] // Left-based indices, right to left.
@@ -1194,6 +1244,8 @@ final class SPRollingDigitLabel: CALayer {
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        var x = contentLeads ? 0 : (bounds.width - total) / 2
+        let h = bounds.height
         for i in 0..<slots.count {
             guard i < chars.count else {
                 // Hide surplus slots immediately when the value loses a digit.
@@ -1236,6 +1288,7 @@ final class SPRollingDigitLabel: CALayer {
             addRoll(to: outgoing, from: 0, exitTo: 5 * dir,
                     fadeIn: false, delay: delay)
         }
+        positionSuffix()
         CATransaction.commit()
     }
 
@@ -1251,7 +1304,7 @@ final class SPRollingDigitLabel: CALayer {
         let chars = Array(text)
         guard !chars.isEmpty else { return }
         let widths = chars.map { advance($0) }
-        var x = (bounds.width - widths.reduce(0, +)) / 2
+        var x = contentLeads ? 0 : (bounds.width - widths.reduce(0, +)) / 2
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for i in 0..<min(slots.count, chars.count) {
@@ -1260,7 +1313,22 @@ final class SPRollingDigitLabel: CALayer {
             slots[i].active.frame = frame
             slots[i].idle.frame = frame
         }
+        positionSuffix()
         CATransaction.commit()
+    }
+
+    /// Sit the suffix just past the last digit; drop its top so the smaller
+    /// font shares the digits' baseline.
+    private func positionSuffix() {
+        guard let suffixLayer, !suffixText.isEmpty else { return }
+        let font = suffixFont
+        let height = ceil(font.ascender - font.descender)
+        let baselineDrop = self.font.ascender - font.ascender
+        let digitsEnd = contentLeads
+            ? measure(text)
+            : (bounds.width - measure(text)) / 2 + measure(text)
+        suffixLayer.frame = CGRect(x: digitsEnd, y: bounds.height - height - baselineDrop,
+                                   width: suffixWidth, height: height)
     }
 
     private func addRoll(to l: CALayer, from: CGFloat = 0, overshoot: CGFloat = 0,
@@ -3550,7 +3618,10 @@ final class SPChromeView: NSView, PlayerChromePresenting {
             rich.append(NSAttributedString(string: "  " + title, attributes: [.font: font, .foregroundColor: textColor]))
             if let readout = motionPresentation.fpsReadout {
                 // Save the complete lamp/title before appending the atomic
-                // FPS suffix; a narrow chip hides that suffix as one unit.
+                // readout run; a narrow chip hides that run as one unit. The
+                // "fps" unit is drawn by the rolling overlay right after the
+                // digits, so digits and unit cannot drift apart across the two
+                // text systems that lay out this chip.
                 compactRichTitle = NSAttributedString(attributedString: rich)
 
                 let readoutColor = textColor.withAlphaComponent(0.85)
@@ -3559,10 +3630,6 @@ final class SPChromeView: NSView, PlayerChromePresenting {
                 readoutRange = NSRange(location: rich.length, length: (readout as NSString).length)
                 rich.append(NSAttributedString(string: readout,
                                                attributes: [.font: font, .foregroundColor: NSColor.clear]))
-                rich.append(NSAttributedString(string: "fps", attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
-                    .foregroundColor: textColor.withAlphaComponent(0.7),
-                ]))
                 let pad = motionPresentation.fpsReadoutDigits - readout.count
                 if pad > 0 {
                     rich.append(NSAttributedString(string: String(repeating: "0", count: pad),
@@ -3583,7 +3650,9 @@ final class SPChromeView: NSView, PlayerChromePresenting {
             lamp: ChipLamp(on: isOn, color: lampColor, visible: motionPresentation.hasMedia)
         ), to: motionChip)
         motionChip.setReadout(readoutDigits, range: readoutRange, color: readoutDigitsColor,
-                              animated: lampTransitionsAnimate)
+                              animated: lampTransitionsAnimate,
+                              suffix: readoutDigits == nil ? nil : "fps",
+                              suffixColor: textColor.withAlphaComponent(0.7))
     }
 
     /// Drives the episode picker that sits beside the playback-rate chip.
