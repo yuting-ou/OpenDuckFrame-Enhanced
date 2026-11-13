@@ -94,6 +94,15 @@ static_assert(!spEffectiveSdrBoost(true, false, 0));
 static_assert(!spEffectiveSdrBoost(true, true, 1));
 static_assert(!spEffectiveSdrBoost(false, false, 1));
 
+// Stable SDR boost ceiling per display. Live EDR headroom moves with display
+// brightness, occlusion and fullscreen transitions; using it as the boost
+// strength made the picture pump while watching, so the panel's potential
+// headroom (capped at 8x) sets one fixed target instead.
+static constexpr float spSdrBoostHeadroom(float potentialEDR) {
+    const float ref = potentialEDR > 1.0f ? potentialEDR : 1.0f;
+    return (ref < 8.0f ? ref : 8.0f) * 0.85f;
+}
+
 #include "SPRuntimeGates.hpp"
 
 #if !SP_APP_STORE
@@ -256,6 +265,7 @@ enum class SPDoviFrameMode : uint8_t {
     BOOL _streamDeclaredPrimaries;
     BOOL _displayEdrCapable;
     CGFloat _displayCurrentEDR;
+    CGFloat _displayPotentialEDR;
 
     BOOL _sdrBoostRequested;
 
@@ -303,6 +313,7 @@ enum class SPDoviFrameMode : uint8_t {
     std::atomic<uint64_t> _cfgGeneration;
 
     std::atomic<bool> _outputModeSwitchPending;
+    std::atomic<bool> _outputModeApplyPending;
     std::atomic<uint64_t> _committedFrames;
     std::atomic<uint64_t> _hardRenderFailures;
     float _peakNits;
@@ -553,6 +564,7 @@ static_assert(kSPDragFxNearLevel <= kSPDragFxFarLevel);
 #endif
         _displayEdrCapable = (potEDR > 1.01);
         _displayCurrentEDR = maxEDR;
+        _displayPotentialEDR = potEDR;
         _sdrBoostRequested = NO;
         _xdrHeadroomSmoothed = 0.0f;
         _xdrHeadroomAtUs = 0;
@@ -597,6 +609,7 @@ static_assert(kSPDragFxNearLevel <= kSPDragFxFarLevel);
         _specBuilding.store(false);
         _specFailedKey.store(UINT32_MAX);
         _outputModeSwitchPending.store(false);
+        _outputModeApplyPending.store(false);
         _gpuTimeAccumNs.store(0);
         _gpuTimeFrames.store(0);
 
@@ -648,14 +661,20 @@ static_assert(kSPDragFxNearLevel <= kSPDragFxFarLevel);
         std::lock_guard<std::mutex> lock(_cfgMtx);
         _displayEdrCapable = (potentialEDR > 1.01);
         _displayCurrentEDR = currentEDR;
+        _displayPotentialEDR = potentialEDR;
     }
     [self applyOutputMode];
 }
 
 - (void)applyOutputMode {
 
+    // EDR activation emits screen-parameter notifications in rapid bursts
+    // (one per ~8 ms while the headroom ramps). Coalesce them into a single
+    // main-thread apply; the block always reads the newest state under _cfgMtx.
+    if (_outputModeApplyPending.exchange(true)) return;
     const int64_t queued = spDebug() && _logNextPresent.load(std::memory_order_relaxed) ? spNowUs() : 0;
     dispatch_async(dispatch_get_main_queue(), ^{
+        self->_outputModeApplyPending.store(false);
         const int64_t entered = queued ? spNowUs() : 0;
         [self applyOutputModeOnMain];
         if (queued) SPLOG(@"[RendererTiming] mode queue_ms=%.3f apply_ms=%.3f",
@@ -979,7 +998,7 @@ static bool spRenderInlineMode(void) {
     if (!_hasHdr) {
         if (spEffectiveSdrBoost(_sdrBoostRequested, _hasHdr, _outputMode)) {
             return [NSString stringWithFormat:NSLocalizedString(@"renderer.xdrBoostFmt", nil),
-                    MAX(_displayCurrentEDR, 1.0)];
+                    spSdrBoostHeadroom((float)_displayPotentialEDR)];
         }
         return @"SDR";
     }
@@ -2160,14 +2179,14 @@ static bool spRenderInlineMode(void) {
     uniforms.uvals[26] = frameDovi ? sp::kSPGamutBT2020 : _sourceGamut;
     uniforms.uvals[30] = _planar;
     if (spEffectiveSdrBoost(_sdrBoostRequested, _hasHdr, _outputMode)) {
-
-        const float target = (float)MAX(_displayCurrentEDR * 0.85, 1.0);
+        // A fixed boost ceiling per display; see spSdrBoostHeadroom.
+        const float target = spSdrBoostHeadroom((float)_displayPotentialEDR);
         const int64_t nowUs = spNowUs();
-        if (_xdrHeadroomSmoothed <= 0.0f || _xdrHeadroomAtUs == 0 || target <= _xdrHeadroomSmoothed) {
+        if (_xdrHeadroomSmoothed <= 0.0f || _xdrHeadroomAtUs == 0) {
             _xdrHeadroomSmoothed = target;
         } else {
             const float dt = (float)MAX(nowUs - _xdrHeadroomAtUs, (int64_t)0) / 1e6f;
-            const float a = 1.0f - expf(-dt / 0.3f);
+            const float a = 1.0f - expf(-dt / 0.35f);
             _xdrHeadroomSmoothed += (target - _xdrHeadroomSmoothed) * a;
             if (fabsf(target - _xdrHeadroomSmoothed) < 0.005f) _xdrHeadroomSmoothed = target;
         }
