@@ -229,6 +229,8 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
     private var mediaList: [URL] = []
     private var currentMediaIndex = -1
     private var playlistScanGeneration: UInt64 = 0
+    private var viewingPrefsRestorePath: String?
+    private var viewingPrefsRestoreWork: DispatchWorkItem?
     /// Last directory snapshot stays with the window across Previous/Next.
     /// The process-wide index coalesces physical listings across windows; this
     /// local reference makes navigation publish the next list immediately.
@@ -2235,6 +2237,9 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         directorySnapshot = nil
         mediaList.removeAll(keepingCapacity: false)
         currentMediaIndex = -1
+        viewingPrefsRestorePath = nil
+        viewingPrefsRestoreWork?.cancel()
+        viewingPrefsRestoreWork = nil
         refreshEpisodeChip()
         externalSubtitleCandidates.removeAll()
         directoryAutoSubtitleCandidates.removeAll()
@@ -2443,6 +2448,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
                 loadExternalSubtitle(url: subURL)
             }
             maybeRunSubtitleAutoload()
+            scheduleViewingPreferencesRestore()
         }
         if state == .failed {
             cancelTransientInteractions()
@@ -2986,6 +2992,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
             applyInPlayerInterpolation(multiplier: enabled ? 2 : 0)
         case .setXDR(let enabled):
             core?.xdrEnabled = enabled
+            ViewingPreferences.brightnessBoost = enabled
             refreshXDRControl()
         case .setRotation(let degrees):
             core?.setRotation(degrees)
@@ -3603,6 +3610,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
             guard let self else { return }
             let text: String
             if ok {
+                ViewingPreferences.interpolationMultiplier = multiplier
                 switch multiplier {
                 case 2: text = L("chrome.memc.notice.on2")
                 case 3: text = L("chrome.memc.notice.on3")
@@ -3613,6 +3621,49 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
             }
             self.playbackNoticeView().showTransient(text)
             self.refreshMotionSmoothingControl()
+        }
+    }
+
+    /// Re-applies the last viewing setup once the incoming file is actually
+    /// decoding. Runs once per opened file so episode hops do not interfere
+    /// with the workbench plan that is already being carried across.
+    private func scheduleViewingPreferencesRestore() {
+        guard hasVideoSession, let path = openMediaPath,
+              viewingPrefsRestorePath != path else { return }
+        viewingPrefsRestorePath = path
+        viewingPrefsRestoreWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.openMediaPath == path, self.hasVideoSession else { return }
+            self.restoreViewingPreferences()
+        }
+        viewingPrefsRestoreWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+    }
+
+    private func restoreViewingPreferences() {
+        guard hasVideoSession else { return }
+        let workbench = EnhancementWorkbenchController.active
+        guard workbench?.hasPendingEpisodeSwitch != true else { return }
+        var restored = false
+        if ViewingPreferences.brightnessBoost == true, let core, !core.xdrEnabled {
+            let xdr = currentXDRPresentation(core: core)
+            if xdr.hasMedia, xdr.contentSDR, xdr.displayCapable {
+                core.xdrEnabled = true
+                refreshXDRControl()
+                restored = true
+            }
+        }
+        if let multiplier = ViewingPreferences.interpolationMultiplier, multiplier >= 2,
+           !workbenchMotionPlusRequested {
+            EnhancementWorkbenchController.shared.applyInPlayerInterpolation(
+                for: self, multiplier: multiplier) { [weak self] ok, _ in
+                guard let self, ok else { return }
+                self.refreshMotionSmoothingControl()
+            }
+            restored = true
+        }
+        if restored {
+            playbackNoticeView().showTransient(L("viewing.restore.notice"))
         }
     }
 

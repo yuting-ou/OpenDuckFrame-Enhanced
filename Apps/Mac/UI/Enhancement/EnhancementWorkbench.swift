@@ -1702,6 +1702,9 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     /// carried across even if the transient core request flag already cleared.
     var hasAppliedFilePlan: Bool { fileApplied != nil }
 
+    /// True while an episode switch is waiting for the new session to open.
+    var hasPendingEpisodeSwitch: Bool { pendingEpisodePath != nil }
+
     /// Called by the player before it replaces the current file in place. The
     /// workbench waits for the new session, updates its source row, and
     /// re-applies the plan that was running so X2/X3 continues into the next
@@ -5247,8 +5250,12 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             // rate is not a multiplier, so the commit notification cannot turn
             // an X3 session back into X2.
             if case .multiplier = profile.rate {} else { profile.rate = .multiplier(2) }
+            if case .multiplier(let value) = profile.rate, value >= 2 {
+                ViewingPreferences.interpolationMultiplier = value
+            }
         } else {
             profile.interpolationEnabled = false
+            ViewingPreferences.interpolationMultiplier = 0
         }
         if var active = fileApplied {
             active.interpolationEnabled = player.workbenchMotionPlusRequested
@@ -5368,6 +5375,14 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             active.outputDisplayID = self.fileApplied?.outputDisplayID ?? 0
             active.outputFullscreen = self.fileApplied?.outputFullscreen ?? false
             self.fileApplied = active; self.fileAppliedAt = ProcessInfo.processInfo.systemUptime
+            if request.sourceKind == "file" {
+                if active.interpolationEnabled,
+                   case .multiplier(let value) = active.rate, value >= 2 {
+                    ViewingPreferences.interpolationMultiplier = value
+                } else if !active.interpolationEnabled {
+                    ViewingPreferences.interpolationMultiplier = 0
+                }
+            }
             self.persist(); self.refreshActions(); self.refreshPlanLabel()
             if effectiveQuality != request.interpolationQuality || effectiveScale != request.scaleEnabled {
                 // Keep the visible settings equal to the plan actually running,
