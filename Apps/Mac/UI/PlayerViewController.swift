@@ -231,6 +231,9 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
     private var playlistScanGeneration: UInt64 = 0
     private var viewingPrefsRestorePath: String?
     private var viewingPrefsRestoreWork: DispatchWorkItem?
+    /// Episode hops re-apply the remembered setup silently: the chip already
+    /// shows the carried-over state, so a toast on every episode would repeat.
+    private var silentRestorePath: String?
     /// Last directory snapshot stays with the window across Previous/Next.
     /// The process-wide index coalesces physical listings across windows; this
     /// local reference makes navigation publish the next list immediately.
@@ -2240,6 +2243,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         viewingPrefsRestorePath = nil
         viewingPrefsRestoreWork?.cancel()
         viewingPrefsRestoreWork = nil
+        silentRestorePath = nil
         refreshEpisodeChip()
         externalSubtitleCandidates.removeAll()
         directoryAutoSubtitleCandidates.removeAll()
@@ -2301,7 +2305,8 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         }
         let index = min(max(currentMediaIndex, 0), mediaList.count - 1)
         chrome?.setEpisodePicker("\(L("episode.picker.title")) \(index + 1)/\(mediaList.count)",
-                                 toolTip: L("episode.picker.title"))
+                                 toolTip: Self.episodeTitle(for: mediaList[index]),
+                                 accessibilityValue: "\(index + 1)/\(mediaList.count)")
     }
 
     private func showEpisodeMenu() {
@@ -2349,6 +2354,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         let reapply = workbenchMotionPlusRequested || workbenchFileLanczosActive
             || (workbench?.hasAppliedFilePlan ?? false)
         workbench?.noteEpisodeSwitch(from: self, to: url, reapply: reapply)
+        silentRestorePath = url.standardizedFileURL.path
         open(url: url)
     }
 
@@ -3527,9 +3533,8 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
     }
 
     @objc func frameInterpolationAction(_ sender: NSMenuItem) {
-        guard SPFeatures.enhancements else { return }
-        guard let mode = SPFrameInterpolationMode(rawValue: sender.tag) else { return }
-        perform(.setFrameInterpolation(mode.rawValue != 0))
+        guard SPFeatures.enhancements, hasVideoSession else { return }
+        applyInPlayerInterpolation(multiplier: sender.tag)
     }
 
     private var hasVideoSession: Bool {
@@ -3663,7 +3668,10 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
             restored = true
         }
         if restored {
-            playbackNoticeView().showTransient(L("viewing.restore.notice"))
+            let currentPath = openMediaPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+            let silent = silentRestorePath != nil && silentRestorePath == currentPath
+            silentRestorePath = nil
+            if !silent { playbackNoticeView().showTransient(L("viewing.restore.notice")) }
         }
     }
 
@@ -4697,10 +4705,19 @@ extension PlayerViewController: NSMenuDelegate {
             }
         case "sp.frameInterpolation":
             let presentation = currentMotionPresentation()
+            // The menu mirrors the in-player menu: 0 / ×2 / ×3.
+            let current: Int
+            if presentation.visualState == .on {
+                let applied = EnhancementWorkbenchController.active?
+                    .appliedInterpolationMultiplier(for: self) ?? 0
+                current = applied >= 2 ? applied : 2
+            } else {
+                current = 0
+            }
             for item in menu.items {
 
                 item.target = self
-                item.state = item.tag == presentation.selectedModeTag ? .on : .off
+                item.state = item.tag == current ? .on : .off
 
                 item.isEnabled = presentation.isMenuItemEnabled(tag: item.tag)
                 item.toolTip = item.tag == 0 ? nil

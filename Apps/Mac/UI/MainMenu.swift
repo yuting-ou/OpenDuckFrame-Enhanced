@@ -180,7 +180,9 @@ enum MainMenuBuilder {
             // The menu delegate controls availability from media and API state.
             // Disable automatic validation so an empty window stays disabled.
             motionMenu.autoenablesItems = false
-            for (title, tag) in [(L("menu.motion.off"), 0), (L("menu.motion.double"), 1)] {
+            for (title, tag) in [(L("chrome.memc.menu.off"), 0),
+                                 (L("chrome.memc.menu.x2"), 2),
+                                 (L("chrome.memc.menu.x3"), 3)] {
                 let item = NSMenuItem(title: title,
                                       action: #selector(PlayerViewController.frameInterpolationAction(_:)),
                                       keyEquivalent: "")

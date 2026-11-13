@@ -12922,13 +12922,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 已开启，正在生成中间帧以提升画面流畅度"
+            "value": "插帧增强已开启，正在生成中间帧以提升画面流畅度"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 已開啟，正在產生中間影格以提升畫面流暢度"
+            "value": "插幀增強已開啟，正在產生中間影格以提升畫面流暢度"
           }
         }
       }
@@ -13028,13 +13028,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 无法开启，当前屏幕刷新率不足以呈现增强后的目标帧率"
+            "value": "插帧增强无法开启，当前屏幕刷新率不足以呈现增强后的目标帧率"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 無法開啟，目前螢幕更新率不足以呈現增強後的目標影格率"
+            "value": "插幀增強無法開啟，目前螢幕更新率不足以呈現增強後的目標影格率"
           }
         }
       }
@@ -13134,13 +13134,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 无法开启，画面增强功能启动失败"
+            "value": "插帧增强无法开启，画面增强功能启动失败"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 無法開啟，畫面增強功能啟動失敗"
+            "value": "插幀增強無法開啟，畫面增強功能啟動失敗"
           }
         }
       }
@@ -13240,13 +13240,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 无法开启，恢复 1× 播放速度后可用"
+            "value": "插帧增强无法开启，恢复 1× 播放速度后可用"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 無法開啟，恢復 1× 播放速度後可用"
+            "value": "插幀增強無法開啟，恢復 1× 播放速度後可用"
           }
         }
       }
@@ -13346,13 +13346,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 无法开启，当前可用内存不足"
+            "value": "插帧增强无法开启，当前可用内存不足"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 無法開啟，目前可用記憶體不足"
+            "value": "插幀增強無法開啟，目前可用記憶體不足"
           }
         }
       }
@@ -13452,13 +13452,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "打开视频后，可使用 插帧增强 提升画面流畅度"
+            "value": "打开视频后，可使用插帧增强提升画面流畅度"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "開啟影片後，可使用 插幀增強 提升畫面流暢度"
+            "value": "開啟影片後，可使用插幀增強提升畫面流暢度"
           }
         }
       }
@@ -13558,13 +13558,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "开启 插帧增强，可通过生成中间帧提升画面流畅度"
+            "value": "开启插帧增强，可通过生成中间帧提升画面流畅度"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "開啟 插幀增強，可透過產生中間影格提升畫面流暢度"
+            "value": "開啟插幀增強，可透過產生中間影格提升畫面流暢度"
           }
         }
       }
@@ -13664,13 +13664,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 正在准备，完成后将增强画面流畅度"
+            "value": "插帧增强正在准备，完成后将增强画面流畅度"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 正在準備，完成後將增強畫面流暢度"
+            "value": "插幀增強正在準備，完成後將增強畫面流暢度"
           }
         }
       }
@@ -13770,13 +13770,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 已开启，因设备性能等原因，仅部分画面获得流畅度增强"
+            "value": "插帧增强已开启，因设备性能等原因，仅部分画面获得流畅度增强"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 已開啟，因裝置效能等原因，僅部分畫面獲得流暢度增強"
+            "value": "插幀增強已開啟，因裝置效能等原因，僅部分畫面獲得流暢度增強"
           }
         }
       }
@@ -13876,13 +13876,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 无法开启，当前仅支持 4K 及以下分辨率的视频"
+            "value": "插帧增强无法开启，当前仅支持 4K 及以下分辨率的视频"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 無法開啟，目前僅支援 4K 及以下解析度的影片"
+            "value": "插幀增強無法開啟，目前僅支援 4K 及以下解析度的影片"
           }
         }
       }
@@ -13982,13 +13982,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 无法开启，当前设备或系统不支持此功能"
+            "value": "插帧增强无法开启，当前设备或系统不支持此功能"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 無法開啟，目前裝置或系統不支援此功能"
+            "value": "插幀增強無法開啟，目前裝置或系統不支援此功能"
           }
         }
       }
@@ -14088,13 +14088,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 暂时无法开启，具体原因尚未确定"
+            "value": "插帧增强暂时无法开启，具体原因尚未确定"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 暫時無法開啟，具體原因尚未確定"
+            "value": "插幀增強暫時無法開啟，具體原因尚未確定"
           }
         }
       }
@@ -14194,13 +14194,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "插帧增强 无法开启，当前视频暂不支持此功能"
+            "value": "插帧增强无法开启，当前视频暂不支持此功能"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "插幀增強 無法開啟，目前影片暫不支援此功能"
+            "value": "插幀增強無法開啟，目前影片暫不支援此功能"
           }
         }
       }
@@ -15148,13 +15148,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "HDR 视频无需通过 亮度增强 增强亮度"
+            "value": "HDR 视频无需开启亮度增强"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "HDR 影片無需透過 亮度增強 增強亮度"
+            "value": "HDR 影片無需開啟亮度增強"
           }
         }
       }
@@ -15254,13 +15254,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "亮度增强 暂不支持当前屏幕，无法打开该功能"
+            "value": "亮度增强暂不支持当前屏幕，无法打开该功能"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "亮度增強 暫不支援目前的螢幕，無法開啟此功能"
+            "value": "亮度增強暫不支援目前的螢幕，無法開啟此功能"
           }
         }
       }
@@ -15360,13 +15360,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "打开视频后，可使用 亮度增强 提升画面亮度"
+            "value": "打开视频后，可使用亮度增强提升画面亮度"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "開啟影片後，可使用 亮度增強 提升畫面亮度"
+            "value": "開啟影片後，可使用亮度增強提升畫面亮度"
           }
         }
       }
@@ -15466,13 +15466,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "开启 亮度增强，可提升画面亮度"
+            "value": "开启亮度增强，可提升画面亮度"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "開啟 亮度增強，可提升畫面亮度"
+            "value": "開啟亮度增強，可提升畫面亮度"
           }
         }
       }
@@ -15572,13 +15572,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "亮度增强 已开启，根据屏幕能力提升画面亮度"
+            "value": "亮度增强已开启，根据屏幕能力提升画面亮度"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "亮度增強 已開啟，根據螢幕能力提升畫面亮度"
+            "value": "亮度增強已開啟，根據螢幕能力提升畫面亮度"
           }
         }
       }
@@ -30730,225 +30730,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Motion Boost"
+            "value": "插帧增强"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Motion Boost"
-          }
-        }
-      }
-    },
-    "menu.motion.double": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "2× Motion Boost"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "2× Motion Boost"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Motion Boost 2×"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Motion Boost 2×"
-          }
-        },
-        "id": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Motion Boost 2×"
-          }
-        },
-        "it": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Motion Boost 2×"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "2× Motion Boost"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "2× Motion Boost"
-          }
-        },
-        "nl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "2× Motion Boost"
-          }
-        },
-        "pl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Motion Boost 2×"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Motion Boost 2×"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Motion Boost 2×"
-          }
-        },
-        "th": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Motion Boost 2×"
-          }
-        },
-        "tr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "2× Motion Boost"
-          }
-        },
-        "vi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Motion Boost 2×"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "2× Motion Boost"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "2× Motion Boost"
-          }
-        }
-      }
-    },
-    "menu.motion.off": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aus"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Off"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Desactivado"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Désactivé"
-          }
-        },
-        "id": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nonaktif"
-          }
-        },
-        "it": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Disattivata"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オフ"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "끔"
-          }
-        },
-        "nl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Uit"
-          }
-        },
-        "pl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Wyłączone"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Desativada"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Выключено"
-          }
-        },
-        "th": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ปิด"
-          }
-        },
-        "tr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Kapalı"
-          }
-        },
-        "vi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tắt"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "关闭"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "關閉"
+            "value": "插幀增強"
           }
         }
       }
@@ -35098,7 +34886,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Brightness Boost (display headroom %.1f×)"
+            "value": "Brightness Boost (%.1f×)"
           }
         },
         "es": {
@@ -35182,13 +34970,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Brightness Boost（屏幕余量 %.1f×）"
+            "value": "亮度增强 ×%.1f"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Brightness Boost（螢幕亮度餘裕 %.1f×）"
+            "value": "亮度增強 ×%.1f"
           }
         }
       }

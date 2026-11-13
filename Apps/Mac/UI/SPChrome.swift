@@ -3588,11 +3588,14 @@ final class SPChromeView: NSView, PlayerChromePresenting {
 
     /// Drives the episode picker that sits beside the playback-rate chip.
     /// Pass nil when the current file has no sibling episodes.
-    func setEpisodePicker(_ title: String?, toolTip: String? = nil) {
+    func setEpisodePicker(_ title: String?, toolTip: String? = nil,
+                          accessibilityValue: String? = nil) {
         let text = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         // Controls refresh on every mouse move; only re-measure the chip when
         // the episode label actually changes.
         if text == lastEpisodeTitle {
+            episodeChip.toolTip = text.isEmpty ? nil : (toolTip ?? text)
+            episodeChip.setAccessibilityValue(text.isEmpty ? nil : (accessibilityValue ?? text))
             episodeChip.isHidden = motionCompact || text.isEmpty
             return
         }
@@ -3601,9 +3604,11 @@ final class SPChromeView: NSView, PlayerChromePresenting {
         if hasEpisodes {
             episodeChip.setText(text)
             episodeChip.toolTip = toolTip ?? text
+            episodeChip.setAccessibilityValue(accessibilityValue ?? text)
             episodeChipWidth = episodeChip.layoutWidth(min: 88, max: 168)
         } else {
             episodeChip.toolTip = nil
+            episodeChip.setAccessibilityValue(nil)
         }
         episodeChip.isHidden = motionCompact || !hasEpisodes
         layoutRightControls()

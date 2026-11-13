@@ -77,7 +77,6 @@ struct MotionPresentation: Equatable {
         return text
     }
 
-    var selectedModeTag: Int { visualState == .on ? 1 : 0 }
     var isControlEnabled: Bool { hasMedia && isAvailable && !contentBypassed }
 
     func isMenuItemEnabled(tag: Int) -> Bool {
