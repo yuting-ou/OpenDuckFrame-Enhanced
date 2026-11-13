@@ -179,7 +179,7 @@ private final class SourceSizeControls {
   stoppedDisplay.refreshActions()
   precondition(stoppedDisplay.hasSelectedSource && stoppedDisplay.startButton?.isEnabled == true,
     "A stopped display with a retained source must remain restartable")
-  precondition(stoppedDisplay.delayedStartButton?.isHidden == true && stoppedDisplay.startButton?.title == "Start Enhancement")
+  precondition(stoppedDisplay.delayedStartButton?.isHidden == true && stoppedDisplay.startButton?.title == "One-Click Enhance")
   stoppedDisplay.capture.target = nil
   stoppedDisplay.refreshActions()
   precondition(stoppedDisplay.startButton?.isEnabled == false)
@@ -393,8 +393,25 @@ private final class SourceSizeControls {
   let noViewModeData = try JSONSerialization.data(withJSONObject:noViewMode)
   precondition(EnhancementProfileStore.decode(noViewModeData, fallbackName:"legacy")?.viewMode == "enhanced")
   precondition(EnhancementProfile().scaleEngineID == "apple.low-sr" && EnhancementProfile().srInputPreset == 720 && !EnhancementProfile().scaleEnabled)
-  precondition(AppleSRSelection.ids == ["apple.low-sr", "apple.video-sr"] && AppleSRSelection.fromPopup(0) == "apple.low-sr" && AppleSRSelection.fromPopup(1) == "apple.video-sr")
-  for legacy in ["lanczos", "metalfx.spatial", "artcnn.c4f32", "artcnn.c4f16", "anime4k", "realcugan", "unknown"] {
+  precondition(AppleSRSelection.ids == ["apple.low-sr", "apple.video-sr", "artcnn.c4f32", "artcnn.c4f16", "metalfx.spatial", "lanczos"]
+               && AppleSRSelection.fromPopup(0) == "apple.low-sr" && AppleSRSelection.fromPopup(1) == "apple.video-sr"
+               && AppleSRSelection.fromPopup(5) == "lanczos")
+  // Fork: ArtCNN / MetalFX / Lanczos remain selectable scale technologies, so
+  // profiles using them must survive store normalization unchanged.
+  for retained in ["lanczos", "metalfx.spatial", "artcnn.c4f32", "artcnn.c4f16"] {
+   var profile = EnhancementProfile()
+   profile.scaleEngineID = retained; profile.scaleEnabled = true
+   profile.srInputPreset = 0; profile.sourceWindowPreset = 1080
+   profile.outputWidth = 1920; profile.outputHeight = 1080
+   let migrated = EnhancementProfileStore.decode(try JSONEncoder().encode(profile), fallbackName:"legacy")!
+   precondition(migrated.scaleEngineID == retained && migrated.outputWidth == 1920 && migrated.outputHeight == 1080)
+   precondition(migrated.srInputPreset == (retained.hasPrefix("artcnn") ? 1080 : 0))
+   precondition(migrated.scaleEnabled && migrated.sourceWindowPreset == 1080 && migrated.sourceWindowResizeActive)
+   try EnhancementProfileStore.save(profile)
+   let persisted = try JSONDecoder().decode(EnhancementProfile.self, from: Data(contentsOf: EnhancementProfileStore.fileURL()))
+   precondition(persisted == migrated, "Save must normalize the file itself, not only its next read")
+  }
+  for legacy in ["anime4k", "realcugan", "unknown"] {
    var profile = EnhancementProfile()
    profile.scaleEngineID = legacy; profile.scaleEnabled = true
    profile.srInputPreset = 0; profile.sourceWindowPreset = 1080
@@ -435,7 +452,7 @@ private final class SourceSizeControls {
   LiveEngineSelection.normalize(&legacyCombined)
   let migratedCombined = EnhancementProfileStore.decode(try JSONEncoder().encode(legacyCombined), fallbackName:"combined")!
   precondition(migratedCombined.interpolationEngineID == "apple.frc" && migratedCombined.modelID == "vt.frc.quality" &&
-               migratedCombined.scaleEngineID == "apple.low-sr" && migratedCombined.srInputPreset == 720 && migratedCombined.scaleEnabled)
+               migratedCombined.scaleEngineID == "artcnn.c4f32" && migratedCombined.srInputPreset == 1080 && migratedCombined.scaleEnabled)
   try FileManager.default.removeItem(at: EnhancementProfileStore.fileURL())
   try FileManager.default.removeItem(at: EnhancementProfileStore.namedDirectory())
   try FileManager.default.removeItem(at: EnhancementProfileStore.presetDirectory())
