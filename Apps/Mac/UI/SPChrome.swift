@@ -3499,15 +3499,16 @@ final class SPChromeView: NSView, PlayerChromePresenting {
         guard SPFeatures.enhancements else { return }
         let motionPresentation = turboFrozenMotion ?? self.motionPresentation
         let isOn = motionPresentation.visualState == .on
+        let chipTitle = L("chrome.memc.chip.title")
         let title: String
         if motionPresentation.contentBypassed {
             // Permanent content bypass says "Unavailable" and is disabled.
             // This is the only always-visible state that may map localized
             // non-Latin glyphs.
-            title = "Motion+ · " + L("chrome.blocked.title")
+            title = chipTitle + " · " + L("chrome.blocked.title")
         } else {
 
-            title = "Motion+"
+            title = chipTitle
         }
 
         let textColor: NSColor
@@ -3649,14 +3650,15 @@ final class SPChromeView: NSView, PlayerChromePresenting {
             a11y = L("chrome.a11y.on")
         }
 
+        let chipTitle = L("chrome.xdr.chip.title")
         let title = NSMutableAttributedString(attributedString: SPChipButton.lampSlot())
-        title.append(NSAttributedString(string: "  Brightness+", attributes: [
+        title.append(NSAttributedString(string: "  " + chipTitle, attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: textColor,
         ]))
         applyChipAppearance(ChipAppearance(
-            title: "Brightness+", titleAttributed: title,
-            titleAttributedKey: "Brightness+|\(textColor.description)",
+            title: chipTitle, titleAttributed: title,
+            titleAttributedKey: "\(chipTitle)|\(textColor.description)",
             textColor: textColor, fill: fillColor,
             border: borderColor, borderWidth: borderWidth, tip: tip,
             a11yValue: a11y, enabled: p.isControlEnabled, on: isOn, lockable: false,
