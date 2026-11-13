@@ -228,7 +228,6 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
 
     private var mediaList: [URL] = []
     private var currentMediaIndex = -1
-    private var episodeChip: SPChipButton?
     private var playlistScanGeneration: UInt64 = 0
     /// Last directory snapshot stays with the window across Previous/Next.
     /// The process-wide index coalesces physical listings across windows; this
@@ -715,9 +714,8 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         c.onMute = { [weak self] in self?.perform(.toggleMute) }
         c.onFullscreen = { [weak self] in self?.perform(.toggleFullscreen) }
         c.onRateSelected = { [weak self] rate in self?.perform(.setPlaybackRate(rate)) }
-        c.onMotionSmoothingToggle = { [weak self] in
-            self?.perform(.toggleFrameInterpolation)
-        }
+        c.onEpisodesTapped = { [weak self] in self?.showEpisodeMenu() }
+        c.onMotionSmoothingToggle = { [weak self] in self?.showInterpolationMenu() }
         c.onXDRToggle = { [weak self] in self?.perform(.toggleXDR) }
         c.durationProvider = { [weak self] in self?.core?.duration ?? 0 }
         c.dustSnapshotProvider = { [weak self] in self?.core?.timelineDustSnapshot() }
@@ -726,6 +724,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         c.layoutChrome(in: view.bounds)
         chrome = c
         chromePresenter = c
+        refreshEpisodeChip()
 #if !SP_APP_STORE
         installChromeAutomationHooks()
 #endif
@@ -2287,48 +2286,21 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         switchToMedia(mediaList[prev])
     }
 
-    /// The visible episode picker mirrors the naturally sorted directory
-    /// snapshot that already drives Previous/Next.
-    private func ensureEpisodeChip() -> SPChipButton {
-        if let chip = episodeChip { return chip }
-        let chip = SPChipButton(width: 104)
-        chip.target = self
-        chip.action = #selector(showEpisodeMenu(_:))
-        chip.translatesAutoresizingMaskIntoConstraints = false
-        chip.setContentCompressionResistancePriority(.required, for: .horizontal)
-        view.addSubview(chip, positioned: .above, relativeTo: playerView)
-        NSLayoutConstraint.activate([
-            chip.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            chip.topAnchor.constraint(equalTo: view.topAnchor, constant: 44),
-            chip.widthAnchor.constraint(equalToConstant: 104),
-            chip.heightAnchor.constraint(equalToConstant: 20),
-        ])
-        chip.isHidden = true
-        episodeChip = chip
-        return chip
-    }
-
+    /// The visible episode picker lives in the chrome chip row beside the
+    /// playback rate. It mirrors the naturally sorted directory snapshot that
+    /// already drives Previous/Next.
     private func refreshEpisodeChip() {
         guard hasMediaSession, mediaList.count > 1 else {
-            episodeChip?.isHidden = true
+            chrome?.setEpisodePicker(nil)
             return
         }
-        let chip = ensureEpisodeChip()
-        if chip.isHidden, isControlBarVisible, chip.superview === view {
-            // Chrome is installed after the first frame, so it can end up above
-            // this chip. Its transparent top strip would swallow the click even
-            // though the chip stays visible. Re-raise the chip while revealing.
-            view.addSubview(chip, positioned: .above, relativeTo: nil)
-        }
         let index = min(max(currentMediaIndex, 0), mediaList.count - 1)
-        chip.setText("\(L("episode.picker.title")) \(index + 1)/\(mediaList.count)")
-        chip.toolTip = L("episode.picker.title")
-        chip.setAccessibilityLabel(L("episode.picker.title"))
-        chip.isHidden = !isControlBarVisible
+        chrome?.setEpisodePicker("\(L("episode.picker.title")) \(index + 1)/\(mediaList.count)",
+                                 toolTip: L("episode.picker.title"))
     }
 
-    @objc private func showEpisodeMenu(_ sender: SPChipButton) {
-        guard hasMediaSession, mediaList.count > 1 else { return }
+    private func showEpisodeMenu() {
+        guard hasMediaSession, mediaList.count > 1, let chrome else { return }
         let current = min(max(currentMediaIndex, 0), mediaList.count - 1)
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -2349,7 +2321,8 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         }
         if upper < mediaList.count { menu.addItem(.separator()) }
         let anchor = menu.items.first { $0.state == .on } ?? menu.items.first
-        menu.popUp(positioning: anchor, at: NSPoint(x: 0, y: sender.bounds.minY - 6), in: sender)
+        let host = chrome.episodeAnchorView
+        menu.popUp(positioning: anchor, at: NSPoint(x: 0, y: host.bounds.minY - 6), in: host)
     }
 
     private static func episodeTitle(for url: URL) -> String {
@@ -3010,7 +2983,7 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
         case .setSubtitleScale(let scale):
             core?.setSubtitleScale(scale)
         case .setFrameInterpolation(let enabled):
-            applyFrameInterpolationMode(enabled ? .doubleRate : .off)
+            applyInPlayerInterpolation(multiplier: enabled ? 2 : 0)
         case .setXDR(let enabled):
             core?.xdrEnabled = enabled
             refreshXDRControl()
@@ -3587,6 +3560,60 @@ final class PlayerViewController: NSViewController, SPPlayerCoreDelegate, NSMenu
 
     func workbenchSetMotionPlus(_ enabled: Bool) {
         applyFrameInterpolationMode(enabled ? .doubleRate : .off)
+    }
+
+    /// In-player interpolation choices. Applying here never activates or shows
+    /// the workbench window: the shared controller prepares and commits the
+    /// file plan in the background, so fullscreen playback stays where it is.
+    private func showInterpolationMenu() {
+        guard hasVideoSession, let chrome else { return }
+        let current = EnhancementWorkbenchController.active?.appliedInterpolationMultiplier(for: self)
+            ?? (workbenchMotionPlusRequested ? 2 : 0)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let choices: [(Int, String)] = [
+            (0, L("chrome.memc.menu.off")),
+            (2, L("chrome.memc.menu.x2")),
+            (3, L("chrome.memc.menu.x3")),
+        ]
+        for (multiplier, title) in choices {
+            let item = NSMenuItem(title: title, action: #selector(selectInterpolation(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.tag = multiplier
+            item.state = multiplier == current ? .on : .off
+            menu.addItem(item)
+        }
+        let anchor = menu.items.first { $0.state == .on } ?? menu.items.first
+        let host = chrome.motionAnchorView
+        menu.popUp(positioning: anchor, at: NSPoint(x: 0, y: host.bounds.minY - 6), in: host)
+    }
+
+    @objc private func selectInterpolation(_ item: NSMenuItem) {
+        applyInPlayerInterpolation(multiplier: item.tag)
+    }
+
+    private func applyInPlayerInterpolation(multiplier: Int) {
+        guard hasVideoSession else { return }
+        if multiplier > 0 {
+            playbackNoticeView().showTransient(L("chrome.memc.notice.preparing"))
+        }
+        EnhancementWorkbenchController.shared.applyInPlayerInterpolation(
+            for: self, multiplier: multiplier) { [weak self] ok, message in
+            guard let self else { return }
+            let text: String
+            if ok {
+                switch multiplier {
+                case 2: text = L("chrome.memc.notice.on2")
+                case 3: text = L("chrome.memc.notice.on3")
+                default: text = L("chrome.memc.notice.off")
+                }
+            } else {
+                text = message.isEmpty ? L("chrome.memc.notice.failed") : message
+            }
+            self.playbackNoticeView().showTransient(text)
+            self.refreshMotionSmoothingControl()
+        }
     }
 
     func workbenchSetFileCadence(mode: Int, numerator: Int64, denominator: Int64) -> Bool {

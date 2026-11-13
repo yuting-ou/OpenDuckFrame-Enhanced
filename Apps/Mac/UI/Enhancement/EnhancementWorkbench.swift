@@ -1655,6 +1655,48 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                                     "已选择 ODF-VFI。请点击开始增强后应用到此视频。"))
     }
 
+    /// The multiplier currently running for the attached player (2 or 3), or 0
+    /// when interpolation is off. The player uses it for menu checkmarks.
+    func appliedInterpolationMultiplier(for player: PlayerViewController) -> Int {
+        guard player.workbenchMotionPlusRequested else { return 0 }
+        if let applied = fileApplied, case .multiplier(let value) = applied.rate { return value }
+        if case .multiplier(let value) = profile.rate { return value }
+        return 2
+    }
+
+    /// Applies an interpolation choice coming from the player chrome. The
+    /// workbench window is never shown or activated: the same preparation and
+    /// commit path runs in the background so fullscreen playback is untouched.
+    func applyInPlayerInterpolation(for player: PlayerViewController, multiplier: Int,
+                                    completion: @escaping (Bool, String) -> Void) {
+        guard player.hasOpenMedia, let path = player.openMediaPath else {
+            completion(false, EnhancementText.t("Open a video first.", "请先打开视频。")); return
+        }
+        cancelCountdown()
+        inputRouter?.stop(reason: "source_changed")
+        interactionArmed = false
+        capture.stop()
+        let url = URL(fileURLWithPath: path)
+        if fileURL?.standardizedFileURL != url.standardizedFileURL { fileApplied = nil }
+        fileURL = url
+        profile.sourceKind = "file"
+        profile.sourceTitle = url.lastPathComponent
+        profile.sourceBundleIdentifier = ""
+        if multiplier >= 2 {
+            profile.interpolationEnabled = true
+            profile.rate = .multiplier(multiplier)
+        } else {
+            profile.interpolationEnabled = false
+        }
+        LiveEngineSelection.normalize(&profile)
+        activeSourceKind = "file"
+        activeSourceBundle = ""
+        showSourceTitle(url.lastPathComponent)
+        loadControls()
+        persist()
+        applyFileRequest(skipOutputSwitch: true, completion: completion)
+    }
+
     /// True while a file plan is actually running for the attached player.
     /// The player consults this before an episode switch so a running plan is
     /// carried across even if the transient core request flag already cleared.
@@ -5201,14 +5243,17 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         guard let player = selectedFilePlayer() else { return }
         if player.workbenchMotionPlusRequested {
             profile.interpolationEnabled = true
-            profile.rate = .multiplier(2)
+            // Keep the chosen cadence (X2/X3). Only fall back when the stored
+            // rate is not a multiplier, so the commit notification cannot turn
+            // an X3 session back into X2.
+            if case .multiplier = profile.rate {} else { profile.rate = .multiplier(2) }
         } else {
             profile.interpolationEnabled = false
         }
         if var active = fileApplied {
             active.interpolationEnabled = player.workbenchMotionPlusRequested
             if active.interpolationEnabled {
-                active.rate = .multiplier(2)
+                if case .multiplier = active.rate {} else { active.rate = .multiplier(2) }
             }
             LiveEngineSelection.normalize(&active)
             fileApplied = active
@@ -5218,27 +5263,33 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         refreshPlanLabel()
     }
 
-    private func applyFileRequest(skipOutputSwitch: Bool = false) {
+    private func applyFileRequest(skipOutputSwitch: Bool = false,
+                                  completion: ((Bool, String) -> Void)? = nil) {
         LiveEngineSelection.normalize(&profile)
         guard let player = selectedFilePlayer() else {
             fileApplyError = EnhancementText.t("Open a video before applying file settings.", "请先打开视频，再应用文件设置。")
-            statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
+            statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed
+            completion?(false, fileApplyError); return
         }
         guard outputScreen(for: profile.outputDisplayID) != nil else {
             fileApplyError = EnhancementText.t("The selected display is unavailable.", "所选显示器不可用。")
-            statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
+            statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed
+            completion?(false, fileApplyError); return
         }
         guard !profile.scaleEnabled || ArtCNNSRSelection.contains(profile.scaleEngineID) || ["metalfx.spatial", "lanczos"].contains(profile.scaleEngineID) else {
             fileApplyError = EnhancementText.t("This scaler is not connected to file playback yet.", "这个缩放引擎尚未接入文件播放。")
-            statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
+            statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed
+            completion?(false, fileApplyError); return
         }
         guard !profile.interpolationEnabled || ["apple.frc", "rife.metal", "apple.lowlatency", "distildrba.coreml"].contains(profile.interpolationEngineID) else {
             fileApplyError = EnhancementText.t("This interpolation engine is not connected to file playback yet.", "这个插帧引擎尚未接入文件播放。")
-            statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
+            statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed
+            completion?(false, fileApplyError); return
         }
         if profile.interpolationEnabled && profile.interpolationEngineID == "apple.frc" && profile.interpolationQuality != "normal" {
             fileApplyError = EnhancementText.t("File playback currently supports the normal FRC setting.", "文件播放目前支持 Apple 帧率转换的标准档。")
-            statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
+            statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed
+            completion?(false, fileApplyError); return
         }
         let mode: Int, numerator: Int64, denominator: Int64
         if !profile.interpolationEnabled {
@@ -5252,7 +5303,8 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                 let maxFixedRate = min(player.workbenchSourceFPS * 5, 240)
                 guard d > 0, n > 0, player.workbenchSourceFPS > 0, Double(n) / Double(d) <= maxFixedRate + 0.01 else {
                     fileApplyError = EnhancementText.t("For file playback choose a fixed rate up to 5× the source rate (max 240 fps).", "文件固定帧率最多为来源帧率的 5 倍，且不超过 240 帧。")
-                    statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
+                    statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed
+                    completion?(false, fileApplyError); return
                 }
                 mode = 1; numerator = n; denominator = d
             }
@@ -5260,7 +5312,8 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         if profile.interpolationEnabled && ["apple.lowlatency", "distildrba.coreml"].contains(profile.interpolationEngineID) {
             guard case .multiplier(2) = profile.rate else {
                 fileApplyError = EnhancementText.t("This file interpolation engine currently supports X2 midpoint only.", "此文件插帧引擎当前仅支持 X2 中点。")
-                statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed; return
+                statusLabel.stringValue = fileApplyError; statusLabel.textColor = .systemRed
+                completion?(false, fileApplyError); return
             }
         }
         let request = profile, sourcePath = player.openMediaPath
@@ -5290,12 +5343,14 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             guard ready, self.profile == request, self.selectedFilePlayer() === player, player.openMediaPath == sourcePath else {
                 player.workbenchCancelFileLanczosPreparation(); player.workbenchCancelFileRifePreparation()
                 self.fileApplyError = message.isEmpty ? EnhancementText.t("File settings changed; the previous plan remains.", "文件设置已改变，保留原方案。") : EnhancementText.runtime(message)
-                self.statusLabel.stringValue = self.fileApplyError; self.statusLabel.textColor = .systemRed; return
+                self.statusLabel.stringValue = self.fileApplyError; self.statusLabel.textColor = .systemRed
+                completion?(false, self.fileApplyError); return
             }
             guard self.outputScreen(for: request.outputDisplayID) != nil else {
                 player.workbenchCancelFileLanczosPreparation(); player.workbenchCancelFileRifePreparation()
                 self.fileApplyError = EnhancementText.t("The selected display is unavailable; the previous plan remains.", "所选显示器不可用，保留原方案。")
-                self.statusLabel.stringValue = self.fileApplyError; self.statusLabel.textColor = .systemRed; return
+                self.statusLabel.stringValue = self.fileApplyError; self.statusLabel.textColor = .systemRed
+                completion?(false, self.fileApplyError); return
             }
             self.applyingFileSettings = true
             let committed = player.workbenchCommitFilePlan(interpolation: request.interpolationEnabled, rife: useRife || useLowLatency || useDistil, cadence: mode, numerator: numerator, denominator: denominator, scaler: effectiveScale)
@@ -5303,7 +5358,8 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             guard committed else {
                 player.workbenchCancelFileLanczosPreparation(); player.workbenchCancelFileRifePreparation()
                 self.fileApplyError = EnhancementText.t("File enhancement could not be applied; the previous plan remains.", "文件增强未能应用，保留原方案。")
-                self.statusLabel.stringValue = self.fileApplyError; self.statusLabel.textColor = .systemRed; return
+                self.statusLabel.stringValue = self.fileApplyError; self.statusLabel.textColor = .systemRed
+                completion?(false, self.fileApplyError); return
             }
             player.workbenchRefreshRenderingVisibility()
             var active = request
@@ -5329,6 +5385,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                 self.statusLabel.stringValue = self.fileStatus()
                 self.statusLabel.textColor = .secondaryLabelColor
                 self.refreshActions(); self.refreshPlanLabel(); self.updateSimpleSummary()
+                completion?(true, self.statusLabel.stringValue)
                 return
             }
             self.fileOutputToken &+= 1
@@ -5348,6 +5405,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                     self.statusLabel.stringValue = self.fileApplyError; self.statusLabel.textColor = .systemOrange
                 }
                 self.refreshPlanLabel()
+                completion?(true, self.fileApplyError.isEmpty ? self.fileStatus() : self.fileApplyError)
             }
         }
         func prepareScaler() {

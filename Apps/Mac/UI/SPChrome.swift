@@ -2768,6 +2768,7 @@ final class SPChromeView: NSView, PlayerChromePresenting {
     var onFullscreen: (() -> Void)?
     var onRateSelected: ((Double) -> Void)?
     var onMotionSmoothingToggle: (() -> Void)?
+    var onEpisodesTapped: (() -> Void)?
     var onXDRToggle: (() -> Void)?
     var durationProvider: (() -> Double) = { 0 }
 
@@ -2785,6 +2786,14 @@ final class SPChromeView: NSView, PlayerChromePresenting {
     private let fsBtn = SPIconButton(symbol: "arrow.up.left.and.arrow.down.right", pointSize: SPM.symAux, size: SPM.btnAux)
     private let volSlider = SPVolumeControl(frame: .zero)
     private let rateChip = SPChipButton(width: 48)
+    private let episodeChip = SPChipButton(width: 96)
+    private var episodeChipWidth: CGFloat = 96
+    private var hasEpisodes = false
+    private var lastEpisodeTitle: String?
+
+    /// Anchor views for player-owned pop-up menus (episodes, interpolation).
+    var episodeAnchorView: NSView { episodeChip }
+    var motionAnchorView: NSView { motionChip }
 
     private let hdrLabel: NSTextField = {
         let l = NSTextField(labelWithString: "")
@@ -2909,6 +2918,10 @@ final class SPChromeView: NSView, PlayerChromePresenting {
         rateChip.toolTip = L("chrome.rate.tooltip")
         rateChip.target = self
         rateChip.action = #selector(rateTapped)
+        episodeChip.target = self
+        episodeChip.action = #selector(episodesTapped)
+        episodeChip.setAccessibilityLabel(L("episode.picker.title"))
+        episodeChip.isHidden = true
         hdrLabel.isHidden = true
         if SPFeatures.enhancements {
             motionChip.target = self
@@ -2967,7 +2980,7 @@ final class SPChromeView: NSView, PlayerChromePresenting {
         // Omitted feature chips never enter the view or layout hierarchy.
         var installedViews: [NSView] = [track, playBtn, backBtn, fwdBtn]
         if SPFeatures.enhancements { installedViews += [motionChip] }
-        installedViews += [xdrChip, hdrLabel, rateChip, muteBtn, volSlider, fsBtn,
+        installedViews += [xdrChip, hdrLabel, episodeChip, rateChip, muteBtn, volSlider, fsBtn,
                            curLabel, remLabel, bubble, previewCard]
         for v in installedViews { addSubview(v) }
 
@@ -3291,8 +3304,11 @@ final class SPChromeView: NSView, PlayerChromePresenting {
     // switching media, toggling an enhancement or updating FPS cannot hide it.
     private func regularControlsWidth() -> CGFloat {
         let playbackWidth = SPM.btnMain + 2 * SPM.btnAux + 2 * SPM.gapIn
-        let transportWidth = 2 * SPM.btnAux + 2 * SPM.gapBtw
+        var transportWidth = 2 * SPM.btnAux + 2 * SPM.gapBtw
             + volSlider.regularVisualWidth + SPM.gapIn + regularRateWidth
+        if !episodeChip.isHidden {
+            transportWidth += episodeChipWidth + SPM.gapBtw
+        }
         var featureWidth = SPM.gapIn + regularXDRWidth + SPM.gapBtw + hdrLabelSize.width
         if SPFeatures.enhancements {
             featureWidth += SPM.flexibleChipMinW + SPM.gapIn
@@ -3313,6 +3329,7 @@ final class SPChromeView: NSView, PlayerChromePresenting {
             motionChip.isHidden = compactControls
         }
         xdrChip.isHidden = compactControls
+        episodeChip.isHidden = compactControls || !hasEpisodes
         hdrLabel.isHidden = compactControls || latestHDRDescription == nil
         var rx = colX + colW
         fsBtn.frame = NSRect(x: rx - SPM.btnAux, y: byC - SPM.btnAux / 2, width: SPM.btnAux, height: SPM.btnAux)
@@ -3328,6 +3345,11 @@ final class SPChromeView: NSView, PlayerChromePresenting {
         rx = muteBtn.frame.minX - SPM.gapBtw
         rateChip.frame = NSRect(x: rx - regularRateWidth, y: byC - 10, width: regularRateWidth, height: 20)
         rx = rateChip.frame.minX - SPM.gapIn
+        if !compactControls, hasEpisodes {
+            episodeChip.frame = NSRect(x: rx - episodeChipWidth, y: byC - 10,
+                                       width: episodeChipWidth, height: 20)
+            rx = episodeChip.frame.minX - SPM.gapIn
+        }
         if !compactControls {
             if SPFeatures.enhancements {
                 let motionBudget = min(SPM.flexibleChipMaxW,
@@ -3561,6 +3583,29 @@ final class SPChromeView: NSView, PlayerChromePresenting {
         ), to: motionChip)
         motionChip.setReadout(readoutDigits, range: readoutRange, color: readoutDigitsColor,
                               animated: lampTransitionsAnimate)
+    }
+
+    /// Drives the episode picker that sits beside the playback-rate chip.
+    /// Pass nil when the current file has no sibling episodes.
+    func setEpisodePicker(_ title: String?, toolTip: String? = nil) {
+        let text = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // Controls refresh on every mouse move; only re-measure the chip when
+        // the episode label actually changes.
+        if text == lastEpisodeTitle {
+            episodeChip.isHidden = motionCompact || text.isEmpty
+            return
+        }
+        lastEpisodeTitle = text
+        hasEpisodes = !text.isEmpty
+        if hasEpisodes {
+            episodeChip.setText(text)
+            episodeChip.toolTip = toolTip ?? text
+            episodeChipWidth = episodeChip.layoutWidth(min: 88, max: 168)
+        } else {
+            episodeChip.toolTip = nil
+        }
+        episodeChip.isHidden = motionCompact || !hasEpisodes
+        layoutRightControls()
     }
 
     func setXDR(_ presentation: XDRPresentation) {
@@ -3850,6 +3895,7 @@ final class SPChromeView: NSView, PlayerChromePresenting {
     @objc private func muteTapped() { onMute?() }
     @objc private func fsTapped() { onFullscreen?() }
     @objc private func motionSmoothingTapped() { onMotionSmoothingToggle?() }
+    @objc private func episodesTapped() { onEpisodesTapped?() }
     @objc private func xdrTapped() { onXDRToggle?() }
     @objc private func volChanged() { onVolume?(volSlider.volumePercent) }
 }
