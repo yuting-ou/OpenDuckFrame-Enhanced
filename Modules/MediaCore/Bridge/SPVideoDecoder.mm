@@ -1800,13 +1800,34 @@ static void decoderOutputCallback(void *refCon, void *sourceFrameRefCon, OSStatu
     NSDictionary *decoderSpec = @{
         (__bridge NSString *)kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder : @NO,
     };
+    // 10-bit SDR sources (e.g. HEVC Main 10 web releases with BT.709 color)
+    // decode to 8-bit NV12: the file enhancement gates require 8-bit frames,
+    // and the hardware converter restores interpolation and upscaling for
+    // these files. 10-bit HDR (PQ/HLG) keeps native 10-bit output for the HDR
+    // render path; the 10-bit entries stay as a fallback if VT declines 8-bit
+    // output for a stream.
+    BOOL tenBitSDR = NO;
+    if (const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get((enum AVPixelFormat)par->format)) {
+        if (descriptor->comp[0].depth > 8) {
+            CFStringRef sessionTrc = sp::spCVTransferFunction(par->color_trc);
+            BOOL hdr = sessionTrc && (CFEqual(sessionTrc, kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ) ||
+                                      CFEqual(sessionTrc, kCVImageBufferTransferFunction_ITU_R_2100_HLG));
+            tenBitSDR = !hdr;
+        }
+    }
+    NSArray<NSNumber *> *outputFormats = tenBitSDR ? @[
+        @(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),    // NV12 (8-bit)
+        @(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange),
+        @(kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange),   // P010 (10-bit, fallback)
+        @(kCVPixelFormatType_420YpCbCr10BiPlanarFullRange),
+    ] : @[
+        @(kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange),   // P010 (10-bit HDR)
+        @(kCVPixelFormatType_420YpCbCr10BiPlanarFullRange),
+        @(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),    // NV12 (8-bit)
+        @(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange),
+    ];
     NSMutableDictionary *destAttrs = [@{
-        (__bridge NSString *)kCVPixelBufferPixelFormatTypeKey : @[
-            @(kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange),   // P010（10-bit HDR）
-            @(kCVPixelFormatType_420YpCbCr10BiPlanarFullRange),
-            @(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),    // NV12（8-bit）
-            @(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange),
-        ],
+        (__bridge NSString *)kCVPixelBufferPixelFormatTypeKey : outputFormats,
         (__bridge NSString *)kCVPixelBufferIOSurfacePropertiesKey : @{},
     } mutableCopy];
 
