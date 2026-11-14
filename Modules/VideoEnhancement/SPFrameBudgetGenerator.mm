@@ -1072,7 +1072,14 @@ static inline bool spBudgetEntryMatches(const SPBudgetEntry &e, uint32_t width, 
     bool fileProviderSelected;
     { std::lock_guard<std::mutex> lock(_mtx); fileProviderSelected = _activeFileProvider != nil; }
     rc.apiAvailable = rc.requested && (fileProviderSelected || SPFRCEngine.isAvailable);
-    rc.dynamicHDRUnsafe = _media.dynamicHDRUnsafe || (fileProviderSelected && (format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange && format != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)) ||
+    // The biplanar 10-bit formats are also the brightness/EDR presentation
+    // output: what makes dynamic HDR unsafe is PQ/HLG content, not the bit
+    // depth. The engine's per-frame PQ/HLG gate remains the backstop.
+    const bool biplanarSDRSupported = format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
+        format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+        format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange ||
+        format == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
+    rc.dynamicHDRUnsafe = _media.dynamicHDRUnsafe || (fileProviderSelected && !biplanarSDRSupported) ||
         (_media.dynamicHDRRequiresMetadata && !spMotionDoviFrameEligible(buffer));
     rc.interlaced = _media.interlaced || ctx.interlaced;
     rc.scanUnknown = ctx.scanUnknown;
