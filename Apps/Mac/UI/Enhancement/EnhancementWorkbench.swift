@@ -751,7 +751,10 @@ struct FileInterpolationPerformance: Equatable {
         if highResolution {
             if multiplier >= 4 { return .init(inferenceLongEdge: 1280, bridgeCount: 3) }
             if multiplier == 3 { return .init(inferenceLongEdge: 1600, bridgeCount: 2) }
-            if multiplier == 2 { return .init(inferenceLongEdge: 1920, bridgeCount: 1) }
+            // X2 at 4K measured ~43 ms per pair at a 1920 edge on M2 Pro; a
+            // 1600 edge keeps the generated frames at the 40 ms pair budget
+            // with headroom for the presentation pass.
+            if multiplier == 2 { return .init(inferenceLongEdge: 1600, bridgeCount: 1) }
             if targetFPS > 90 { return .init(inferenceLongEdge: 1024, bridgeCount: 4) }
             if targetFPS > 0 { return .init(inferenceLongEdge: 1280, bridgeCount: 3) }
             return .init(inferenceLongEdge: 1920, bridgeCount: 1)

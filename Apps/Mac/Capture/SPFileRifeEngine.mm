@@ -278,7 +278,7 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
            (format==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange||format==kCVPixelFormatType_420YpCbCr8BiPlanarFullRange||
             format==kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange||format==kCVPixelFormatType_420YpCbCr10BiPlanarFullRange)&&
            !CFEqual(t1,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ)&&!CFEqual(t1,kCVImageBufferTransferFunction_ITU_R_2100_HLG);
-        const BOOL metalEligible=format==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange&&m1&&p1&&
+        const BOOL metalEligible=m1&&p1&&
             CFEqual(m1,kCVImageBufferYCbCrMatrix_ITU_R_709_2)&&CFEqual(p1,kCVImageBufferColorPrimaries_ITU_R_709_2);
         if(m1)CFRelease(m1);if(m2)CFRelease(m2);if(p1)CFRelease(p1);if(p2)CFRelease(p2);if(t1)CFRelease(t1);if(t2)CFRelease(t2);
         if(!compatible||!SPConfigureFileColorTransfer(self->_toNV12,previous,YES)||
@@ -287,30 +287,22 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
         // Consecutive pairs share the same immutable original. Keep the decoded
         // source, its inference-size copy, and the bridge input so every engine
         // can reuse its features. A seek or skipped source starts a fresh pair.
-        const BOOL cached=self->_cachedSource==previous && self->_cachedPTS==previousPTSUs && self->_cachedInfer && self->_cachedRGB;
+        const BOOL cached=self->_cachedSource==previous && self->_cachedPTS==previousPTSUs && self->_cachedRGB;
         const uint64_t previousIdentity=cached?self->_cachedIdentity:++self->_nextIdentity;
         const uint64_t currentIdentity=++self->_nextIdentity;
         if(cached){
-            inferPrev=CVPixelBufferRetain(self->_cachedInfer);
             rgbPrev=CVPixelBufferRetain(self->_cachedRGB);
-        }else if(self->_downscale){
-            inferPrev=SPFileRifeCreate(inferW,inferH,format);
-            if(inferPrev)SPFileRifeCopyAttachments(previous,inferPrev);
-            if(!inferPrev||VTPixelTransferSessionTransferImage(self->_downscale,previous,inferPrev)!=noErr){fail(SPFileRifeError(2,@"RIFE 输入缩小失败。"));return;}
-            rgbPrev=SPFileRifeCreate(inferW,inferH,kCVPixelFormatType_32BGRA);
         }else{
-            inferPrev=CVPixelBufferRetain(previous);
             rgbPrev=SPFileRifeCreate(inferW,inferH,kCVPixelFormatType_32BGRA);
         }
-        if(self->_downscale){
-            inferCur=SPFileRifeCreate(inferW,inferH,format);
-            if(inferCur)SPFileRifeCopyAttachments(current,inferCur);
-            if(!inferCur||VTPixelTransferSessionTransferImage(self->_downscale,current,inferCur)!=noErr){fail(SPFileRifeError(2,@"RIFE 输入缩小失败。"));return;}
-        }else inferCur=CVPixelBufferRetain(current);
         rgbCur=SPFileRifeCreate(inferW,inferH,kCVPixelFormatType_32BGRA);
         if(!rgbPrev||!rgbCur){fail(SPFileRifeError(3,@"RIFE 输入画面分配失败。"));return;}
         for(CVPixelBufferRef rgb:{rgbPrev,rgbCur}){CVBufferSetAttachment(rgb,kCVImageBufferColorPrimariesKey,kCVImageBufferColorPrimaries_ITU_R_709_2,kCVAttachmentMode_ShouldPropagate);CVBufferSetAttachment(rgb,kCVImageBufferTransferFunctionKey,kCVImageBufferTransferFunction_ITU_R_709_2,kCVAttachmentMode_ShouldPropagate);}
-        if((!cached&&VTPixelTransferSessionTransferImage(self->_toRGB,inferPrev,rgbPrev)!=noErr)||VTPixelTransferSessionTransferImage(self->_toRGB,inferCur,rgbCur)!=noErr){fail(SPFileRifeError(4,@"RIFE 输入格式转换失败。"));return;}
+        // One VT pass per new frame performs the capture-size downscale, any
+        // bit-depth conversion and the RGB conversion together. The separate
+        // NV12 intermediate doubled the transfer cost at capture size and blew
+        // the pair budget on 4K sources.
+        if((!cached&&VTPixelTransferSessionTransferImage(self->_toRGB,previous,rgbPrev)!=noErr)||VTPixelTransferSessionTransferImage(self->_toRGB,current,rgbCur)!=noErr){fail(SPFileRifeError(4,@"RIFE 输入格式转换失败。"));return;}
         for(CVPixelBufferRef rgb:{rgbPrev,rgbCur}){CVBufferSetAttachment(rgb,kCVImageBufferColorPrimariesKey,kCVImageBufferColorPrimaries_ITU_R_709_2,kCVAttachmentMode_ShouldPropagate);CVBufferSetAttachment(rgb,kCVImageBufferTransferFunctionKey,kCVImageBufferTransferFunction_ITU_R_709_2,kCVAttachmentMode_ShouldPropagate);CVBufferRemoveAttachment(rgb,kCVImageBufferYCbCrMatrixKey);}
         NSMutableArray<id> *slots=[NSMutableArray arrayWithCapacity:phases.count];
         for(NSUInteger i=0;i<phases.count;i++)[slots addObject:[NSNull null]];
@@ -350,11 +342,14 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
             if(![slot isKindOfClass:[SPOwnedPixelBuffer class]]){failure=SPFileRifeError(8,@"RIFE 没有返回全部插帧。");break;}
             SPOwnedPixelBuffer *box=(SPOwnedPixelBuffer *)slot;
             if(CVPixelBufferGetWidth(box.buffer)!=(size_t)inferW||CVPixelBufferGetHeight(box.buffer)!=(size_t)inferH){failure=SPFileRifeError(11,@"RIFE 输出尺寸不正确。");break;}
-            if(self->_upscale){
-                CVPixelBufferRef full=SPFileRifeCreate(self->_width,self->_height,format);
+            if(metalEligible){
+                // One Metal pass restores capture size (normalized sampling
+                // scales for free) with the detail-recovery sharpen; the VT
+                // two-step below stays as the non-709 fallback.
+                CVPixelBufferRef full=SPFileRifeCreate(self->_width,self->_height,kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
                 if(!full){failure=SPFileRifeError(12,@"RIFE 输出画面分配失败。");break;}
                 SPFileRifeCopyAttachments(previous,full);
-                if(!metalEligible||![self metalConvertBGRA:box.buffer toNV12:full]){
+                if(![self metalConvertBGRA:box.buffer toNV12:full]){
                     CVPixelBufferRef inferNV=SPFileRifeCreate(inferW,inferH,format);
                     if(!inferNV){CVPixelBufferRelease(full);failure=SPFileRifeError(12,@"RIFE 输出画面分配失败。");break;}
                     BOOL ok=VTPixelTransferSessionTransferImage(self->_toNV12,box.buffer,inferNV)==noErr;
@@ -377,7 +372,6 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
         [self clearInputCache];
         if(!failure&&converted.count==phases.count){
             self->_cachedSource=CVPixelBufferRetain(current);
-            self->_cachedInfer=CVPixelBufferRetain(inferCur);
             self->_cachedRGB=CVPixelBufferRetain(rgbCur);
             self->_cachedPTS=currentPTSUs;self->_cachedIdentity=currentIdentity;
         }else if(!failure)failure=SPFileRifeError(8,@"RIFE 没有返回全部插帧。");
