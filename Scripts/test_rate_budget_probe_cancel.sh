@@ -75,6 +75,7 @@ methods = [
     "- (sp::NativeCadenceSnapshot)nativeCadenceSnapshot",
     "- (BOOL)nativeBudgetForSnapshot:",
     "- (BOOL)rateBudgetEnabled",
+    "- (BOOL)automaticVideoCadenceActive",
     "- (void)releaseRateBudgetProbeJob:",
     "- (void)cancelRateBudgetProbe",
     "- (BOOL)rateBudgetProbeEligible",

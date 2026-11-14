@@ -5049,6 +5049,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         processor.setViewMode(.enhanced)
         persist()
         refreshPlanLabel()
+        updateSimpleSummary()
         if capture.running { statusLabel.stringValue = EnhancementText.t("Pending", "待应用") }
     }
 
@@ -5650,7 +5651,18 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         }
         request.scaleEnabled = profile.scaleEnabled
         request.scaleQualityID = profile.scaleQualityID
-        request.scaleEngine = profile.scaleEngineID == "apple.video-sr" ? .appleVideoSR : .appleLowLatencySR
+        // Every selectable scale technology must reach its live engine; the
+        // two Apple entries keep upstream's mapping, the rest follow the enum.
+        switch profile.scaleEngineID {
+        case "apple.video-sr": request.scaleEngine = .appleVideoSR
+        case "apple.low-sr": request.scaleEngine = .appleLowLatencySR
+        case "artcnn.c4f16": request.scaleEngine = .artCNN16
+        case "artcnn.c4f32": request.scaleEngine = .artCNN32
+        case "metalfx.spatial": request.scaleEngine = .metalFX
+        case "anime4k": request.scaleEngine = .anime4K
+        case "realcugan": request.scaleEngine = .realCUGAN
+        default: request.scaleEngine = .lanczos
+        }
         request.srInputPreset = Int32(profile.sourceKind == "file" ? 0 : profile.srInputPreset)
         if profile.sourceWindowResizeActive, case let .window(id, owner) = capture.target {
             request.requiredSourceWidth = Int32(profile.sourceWindowPreset == 480 ? 854 : (profile.sourceWindowPreset == 720 ? 1280 : 1920))
