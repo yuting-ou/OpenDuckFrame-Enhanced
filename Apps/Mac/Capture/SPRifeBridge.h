@@ -24,6 +24,10 @@ static const NSInteger SPRifeBridgeErrorOutputPoolExhausted = 10;
 @property (nonatomic) BOOL liveStreamEnabled;
 /// Set before prepare for the supported automatic window configuration.
 @property (nonatomic) BOOL airPerformanceEnabled;
+/// Set before prepareModelID for live sessions whose capture exceeds the
+/// shared Fast area budget: inference runs at the bounded processing size and
+/// frames return at capture size. Inert without the prescale scalers.
+@property (nonatomic) BOOL adaptiveLiveInference;
 + (NSDictionary<NSString *, id> *)airPerformanceSelectionStatus;
 + (uint64_t)windowCaptureByteLimit;
 + (BOOL)windowOptimizationCapabilitiesSupported;

@@ -5467,6 +5467,15 @@ static NSDictionary *SPAirDelayAlignmentExport(const std::vector<SPAirDelayAlign
             if (sessionJournal) [rife setKeeperSessionJournal:sessionJournal];
             if (sessionRecordingSealed) [rife sealServiceTraceForDiagnostics];
             rife.liveStreamEnabled = copy.rifeStreamEnabled;
+            // Without the window-optimization recipe a capture beyond the
+            // shared Fast area budget cannot sustain its target rate at native
+            // size; downscaled inference keeps interpolation alive instead of
+            // silently passing the original frames through.
+            if (!performanceEnabled && (long long)width * height > 1920LL * 1080
+                && [copy.qualityID isEqualToString:@"fast"]
+                && [copy.modelID isEqualToString:@"rife-v4.25"]) {
+                rife.adaptiveLiveInference = YES;
+            }
             BOOL prepared = performanceEnabled
                 ? [rife prepareWindowModelID:copy.modelID quality:copy.qualityID width:width height:height refreshHz:copy.displayRefreshHz error:&error]
                 : [rife prepareModelID:copy.modelID quality:copy.qualityID width:width height:height error:&error];

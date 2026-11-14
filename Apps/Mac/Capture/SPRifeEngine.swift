@@ -85,6 +85,20 @@ final class SPRifeBridge: NSObject {
     @objc var liveStreamEnabled = false
     /// Set by the live-window eligibility gate before preparing this instance.
     @objc var airPerformanceEnabled = false
+    /// Set by the live planner for sessions whose capture exceeds the shared
+    /// Fast area budget: inference runs at the bounded processing size and the
+    /// prescale scalers restore capture dimensions, without the Air cadence,
+    /// keeper or presenter machinery.
+    @objc var adaptiveLiveInference = false
+    /// Adaptive live inference rides on the prescale scalers, so it exists only
+    /// in builds that compile them; elsewhere the flag is inert.
+    private var adaptiveLivePrescaleActive: Bool {
+#if ODF_AIR_RIFE_PRESCALE_DIAGNOSTIC
+        return adaptiveLiveInference
+#else
+        return false
+#endif
+    }
     private var windowPreparation: [String: Any] = [:]
     @objc var windowPreparationDiagnostics: [String: Any] {
         state.lock(); defer { state.unlock() }; return windowPreparation
@@ -401,7 +415,16 @@ final class SPRifeBridge: NSObject {
             throw Self.error(23, "Fused RIFE presentation requires both prescale and keeper diagnostics")
         }
 #endif
-        let adaptiveSizing = SPAirBetaEnabled() || airPerformanceEnabled
+        var adaptiveSizing = SPAirBetaEnabled() || airPerformanceEnabled
+#if ODF_AIR_RIFE_PRESCALE_DIAGNOSTIC
+        // Best-effort downscaled inference for oversized live captures. The
+        // sizing gate must still pass; otherwise native sizing applies exactly
+        // as before this optimization existed.
+        if !adaptiveSizing, adaptiveLivePrescaleActive, liveStreamEnabled,
+           SPAirBetaSizingReason(width, height) == nil {
+            adaptiveSizing = true
+        }
+#endif
         let processingSize = adaptiveSizing ? SPAirBetaProcessingSize(width, height) : .zero
         if adaptiveSizing, let reason = SPAirBetaSizingReason(width, height) { throw Self.error(24, reason) }
         let processingWidth = adaptiveSizing ? Int(processingSize.width) : (rifePrescaleEnabled ? 1814 : Int(width))
@@ -419,7 +442,9 @@ final class SPRifeBridge: NSObject {
             modelURL: experiment?.url ?? url, qualityTier: tier, preferredDevice: nil,
             experimentOptions: options)
 #if ODF_AIR_RIFE_PRESCALE_DIAGNOSTIC
-        if rifePrescaleEnabled { configuration.preferredDevice = MTLCreateSystemDefaultDevice() }
+        if rifePrescaleEnabled || adaptiveLiveInference {
+            configuration.preferredDevice = MTLCreateSystemDefaultDevice()
+        }
 #endif
 #if ODF_AIR_RESIDENT_KEEPALIVE_DIAGNOSTIC
         requestStopKeeper(planToken: 0, reason: "prepare_replaced")
@@ -446,7 +471,7 @@ final class SPRifeBridge: NSObject {
         }
 #if ODF_AIR_RIFE_PRESCALE_DIAGNOSTIC
         var down: SPSpatialScaler?, up: SPSpatialScaler?
-        if rifePrescaleEnabled {
+        if rifePrescaleEnabled || adaptiveLiveInference {
             guard liveStreamEnabled, tier == .fast, modelID == "rife-v4.25", options.gpuIO,
                   !options.replaceMask, let device = configuration.preferredDevice else {
                 throw Self.error(22, "RIFE prescale requires the frozen EF29/Fast/GPU-IO live stream configuration")
@@ -495,10 +520,16 @@ final class SPRifeBridge: NSObject {
             } catch {
                 keeperFailure(String(describing: error))
                 candidateKeeper?.requestStop(planToken: 0, reason: "prepare_failed")
-                if adaptiveSizing { throw Self.error(24, "Air保活初始化失败，现以原帧播放：\(error.localizedDescription)") }
+                if SPAirBetaEnabled() || airPerformanceEnabled {
+                    throw Self.error(24, "Air保活初始化失败，现以原帧播放：\(error.localizedDescription)")
+                }
             }
         }
-        if adaptiveSizing && candidateKeeper == nil { throw Self.error(24, "Air保活未能准备，现以原帧播放") }
+        // Only the Air paths require the resident keeper; adaptive live
+        // inference runs the plain stream with prescale and no keeper.
+        if (SPAirBetaEnabled() || airPerformanceEnabled) && candidateKeeper == nil {
+            throw Self.error(24, "Air保活未能准备，现以原帧播放")
+        }
 #endif
         state.lock()
         epoch &+= 1
@@ -696,7 +727,7 @@ final class SPRifeBridge: NSObject {
 #endif
                     let bgra = try bridge.ownedBGRA(source, diagnosticToken: token, diagnosticRole: role)
 #if ODF_AIR_RIFE_PRESCALE_DIAGNOSTIC
-                    if bridge.rifePrescaleEnabled {
+                    if bridge.rifePrescaleEnabled || bridge.adaptiveLiveInference {
                         guard let scaler else { throw Self.error(22, "RIFE prescale downscaler is unavailable") }
 #if ODF_AIR_SERVICE_TRACE
                         bridge.airServiceEvent(.prescaleDownBegin, token: token, detail: role, cacheEpoch: bridge.airPrescaleCacheEpoch)
@@ -826,10 +857,10 @@ final class SPRifeBridge: NSObject {
                     guard sourceWidth == CVPixelBufferGetWidth(current), sourceHeight == CVPixelBufferGetHeight(current) else {
                         throw Self.error(2, "RIFE 输入尺寸不一致")
                     }
-                    let width = self.rifePrescaleEnabled ? processWidth : sourceWidth
-                    let height = self.rifePrescaleEnabled ? processHeight : sourceHeight
+                    let width = (self.rifePrescaleEnabled || self.adaptiveLiveInference) ? processWidth : sourceWidth
+                    let height = (self.rifePrescaleEnabled || self.adaptiveLiveInference) ? processHeight : sourceHeight
 #if ODF_AIR_RIFE_PRESCALE_DIAGNOSTIC
-                    if self.rifePrescaleEnabled {
+                    if self.rifePrescaleEnabled || self.adaptiveLiveInference {
 #if ODF_AIR_SERVICE_TRACE
                         self.airServiceEvent(.prescaleSourceDimensions, token: token,
                             detail: UInt64(sourceWidth), value: Double(sourceHeight), cacheEpoch: self.airPrescaleCacheEpoch)
@@ -931,7 +962,7 @@ final class SPRifeBridge: NSObject {
 #endif
                     var finalFrames = frames
 #if ODF_AIR_RIFE_PRESCALE_DIAGNOSTIC
-                    if self.rifePrescaleEnabled && !self.fusedRifePresentEnabled {
+                    if (self.rifePrescaleEnabled || self.adaptiveLiveInference) && !self.fusedRifePresentEnabled {
                         guard let prescaleUp else { throw Self.error(22, "RIFE prescale upscaler is unavailable") }
                         var fullFrames: [CVPixelBuffer] = []
                         for (index, buffer) in frames.enumerated() {
