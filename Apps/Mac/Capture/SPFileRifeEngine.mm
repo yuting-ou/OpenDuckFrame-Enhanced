@@ -193,10 +193,11 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
         CFTypeRef pri=CVBufferCopyAttachment(sample,kCVImageBufferColorPrimariesKey,NULL),trc=CVBufferCopyAttachment(sample,kCVImageBufferTransferFunctionKey,NULL);
         BOOL hdr=trc&&(CFEqual(trc,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ)||CFEqual(trc,kCVImageBufferTransferFunction_ITU_R_2100_HLG));
         BOOL valid=matrix&&pri&&trc&&!hdr&&w>=2&&h>=2&&w<=3840&&h<=2160&&!(w&1)&&!(h&1)&&
-            (f==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange||f==kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)&&
+            (f==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange||f==kCVPixelFormatType_420YpCbCr8BiPlanarFullRange||
+             f==kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange||f==kCVPixelFormatType_420YpCbCr10BiPlanarFullRange)&&
             CGRectEqualToRect(CVImageBufferGetCleanRect(sample),CGRectMake(0,0,w,h));
         if(matrix)CFRelease(matrix);if(pri)CFRelease(pri);if(trc)CFRelease(trc);
-        if(!valid){CVPixelBufferRelease(sample);completion(NO,@"文件 RIFE 需要完整 SDR 8 位 NV12 帧、已知色彩信息和最高 3840×2160 的偶数尺寸。");return;}
+        if(!valid){if(getenv("SP_DEBUG"))NSLog(@"[FileRife] reject f=%08x w=%d h=%d hdr=%d matrix=%d pri=%d trc=%d",(unsigned)f,w,h,(int)hdr,matrix?(int)CFEqual(matrix,kCVImageBufferYCbCrMatrix_ITU_R_709_2):-1,pri?(int)CFEqual(pri,kCVImageBufferColorPrimaries_ITU_R_709_2):-1,trc?(int)CFEqual(trc,kCVImageBufferTransferFunction_ITU_R_709_2):-1);CVPixelBufferRelease(sample);completion(NO,@"文件 RIFE 需要 SDR 帧、已知色彩信息和最高 3840×2160 的偶数尺寸（HDR 暂不支持）。");return;}
         if(![@[@"fast",@"balanced",@"hq"] containsObject:self->_quality]){CVPixelBufferRelease(sample);completion(NO,@"所选 RIFE 质量档位不可用。");return;}
         int inferW=w,inferH=h;
         if(self->_inferenceLongEdge>0){
@@ -274,7 +275,8 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
            CVPixelBufferGetWidth(current)==(size_t)self->_width&&CVPixelBufferGetHeight(current)==(size_t)self->_height&&CVPixelBufferGetPixelFormatType(current)==format&&
            CGRectEqualToRect(CVImageBufferGetCleanRect(previous),CGRectMake(0,0,self->_width,self->_height))&&
            CGRectEqualToRect(CVImageBufferGetCleanRect(current),CGRectMake(0,0,self->_width,self->_height))&&
-           (format==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange||format==kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)&&
+           (format==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange||format==kCVPixelFormatType_420YpCbCr8BiPlanarFullRange||
+            format==kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange||format==kCVPixelFormatType_420YpCbCr10BiPlanarFullRange)&&
            !CFEqual(t1,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ)&&!CFEqual(t1,kCVImageBufferTransferFunction_ITU_R_2100_HLG);
         const BOOL metalEligible=format==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange&&m1&&p1&&
             CFEqual(m1,kCVImageBufferYCbCrMatrix_ITU_R_709_2)&&CFEqual(p1,kCVImageBufferColorPrimaries_ITU_R_709_2);
