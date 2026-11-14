@@ -85,31 +85,62 @@ int main(int argc, char **argv) {
             }];
         BOOL submitted = accepted && dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC)) == 0;
 
-        // Sustained X2 throughput: sequential pairs at the 25 fps source cadence.
-        // The budget is one pair per 40 ms; report each round-trip latency.
-        double worst = 0, sum = 0; int misses = 0, ran = 0;
-        for (int i = 0; i < 10; ++i) {
-            CVPixelBufferRef prev = source10(w, h, 100 + i * 10), cur = source10(w, h, 140 + i * 10);
-            dispatch_semaphore_t pairDone = dispatch_semaphore_create(0);
-            __block double pairLatency = -1; __block BOOL pairOK = NO;
-            BOOL pairAccepted = [engine submitPrevious:prev current:cur
-                previousPTSUs:(int64_t)(i * 40000) currentPTSUs:(int64_t)((i + 1) * 40000)
-                phases:@[@0.5] token:(uint64_t)(100 + i)
-                completion:^(uint64_t token, NSArray<SPOwnedPixelBuffer *> *frames, double latency, NSError *failure) {
-                    pairLatency = latency; pairOK = !failure && frames.count == 1;
-                    dispatch_semaphore_signal(pairDone);
-                }];
-            double pairStarted = CFAbsoluteTimeGetCurrent();
-            BOOL pairFinished = pairAccepted && dispatch_semaphore_wait(pairDone, dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_SEC)) == 0;
-            double pairWall = (CFAbsoluteTimeGetCurrent() - pairStarted) * 1000;
-            CVPixelBufferRelease(prev); CVPixelBufferRelease(cur);
-            if (!pairFinished || !pairOK) { misses++; continue; }
-            ran++;
-            worst = MAX(worst, pairWall); sum += pairWall;
-            if (pairWall > 40.0) misses++;
+        struct PairStats { double average = -1, worst = -1; int ran = 0, misses = 0; };
+        auto runPairs = ^(SPFileRifeEngine *engine, CVPixelBufferRef (*make)(int, int, uint16_t), const char *tag) {
+            PairStats s;
+            double worst = 0, sum = 0; int misses = 0, ran = 0;
+            for (int i = 0; i < 10; ++i) {
+                CVPixelBufferRef prev = make(w, h, (uint16_t)(100 + i * 10)), cur = make(w, h, (uint16_t)(140 + i * 10));
+                dispatch_semaphore_t pairDone = dispatch_semaphore_create(0);
+                __block BOOL pairOK = NO;
+                BOOL pairAccepted = [engine submitPrevious:prev current:cur
+                    previousPTSUs:(int64_t)(i * 40000) currentPTSUs:(int64_t)((i + 1) * 40000)
+                    phases:@[@0.5] token:(uint64_t)(100 + i)
+                    completion:^(uint64_t token, NSArray<SPOwnedPixelBuffer *> *frames, double latency, NSError *failure) {
+                        pairOK = !failure && frames.count == 1;
+                        dispatch_semaphore_signal(pairDone);
+                    }];
+                double pairStarted = CFAbsoluteTimeGetCurrent();
+                BOOL pairFinished = pairAccepted && dispatch_semaphore_wait(pairDone, dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_SEC)) == 0;
+                double pairWall = (CFAbsoluteTimeGetCurrent() - pairStarted) * 1000;
+                CVPixelBufferRelease(prev); CVPixelBufferRelease(cur);
+                if (!pairFinished || !pairOK) { misses++; continue; }
+                ran++;
+                worst = MAX(worst, pairWall); sum += pairWall;
+                if (pairWall > 40.0) misses++;
+            }
+            s.average = ran ? sum / ran : -1; s.worst = worst; s.ran = ran; s.misses = misses;
+            NSLog(@"[THROUGHPUT] %s averageMs=%.1f worstMs=%.1f ran=%d misses=%d", tag,
+                  s.average, s.worst, s.ran, s.misses);
+            return s;
+        };
+        PairStats stats = runPairs(engine, source10, "4K-X2-1600-10bit");
+
+        // X3 (1600, 2 bridges, 2 phases) and fixed-60 (1280, 3 bridges) — the
+        // other 4K profiles, all fed 10-bit frames (worst case).
+        NSArray *profiles = @[
+            @[@[@0.33, @0.66], @1600, @2, @"4K-X3-1600-10bit"],
+            @[@[@0.25, @0.5, @0.75], @1280, @3, @"4K-F60-1280-10bit"],
+        ];
+        NSMutableArray *extraStats = [NSMutableArray array];
+        for (NSArray *profile in profiles) {
+            NSArray<NSNumber *> *phases = profile[0];
+            int edge = [profile[1] intValue], bridges = [profile[2] intValue];
+            const char *tag = [profile[3] UTF8String];
+            SPFileRifeEngine *profileEngine = [[cls alloc] initWithModelID:@"rife-v4.25" quality:@"fast"
+                resourceBundle:bundle inferenceLongEdge:edge bridgeCount:bridges];
+            CVPixelBufferRef warm = source10(w, h, 128);
+            dispatch_semaphore_t pw = dispatch_semaphore_create(0);
+            __block BOOL rw = NO;
+            [profileEngine prepareWithSample:warm completion:^(BOOL r, NSString *m) { rw = r; dispatch_semaphore_signal(pw); }];
+            dispatch_semaphore_wait(pw, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC));
+            PairStats ps;
+            if (rw) ps = runPairs(profileEngine, source10, tag);
+            else { ps.average = -1; ps.misses = 10; }
+            [extraStats addObject:@[ @(ps.average), @(ps.worst), @(ps.misses), @(rw ? 1 : 0) ]];
+            [profileEngine invalidate];
+            if (warm) CVPixelBufferRelease(warm);
         }
-        double average = ran ? sum / ran : -1;
-        NSLog(@"[TENBIT-TIMING] averageMs=%.1f worstMs=%.1f ran=%d misses=%d", average, worst, ran, misses);
         [engine invalidate];
         CVPixelBufferRelease(sample); CVPixelBufferRelease(previous); CVPixelBufferRelease(current);
 
@@ -142,6 +173,8 @@ int main(int argc, char **argv) {
                     if (finished && pairOK) { ran8++; sum += wallMs; worst8 = MAX(worst8, wallMs); }
                 }
                 avg8 = ran8 ? sum / ran8 : -1;
+                NSLog(@"[THROUGHPUT] 4K-X2-1600-8bit averageMs=%.1f worstMs=%.1f ran=%d",
+                      ran8 ? avg8 : -1, worst8, ran8);
             }
             [engine8 invalidate];
             if (sample8) CVPixelBufferRelease(sample8);
@@ -150,9 +183,11 @@ int main(int argc, char **argv) {
         BOOL ok = preparedOK && accepted && submitted && generated;
         NSDictionary *result = @{ @"ok": @(ok), @"prepared": @(preparedOK), @"accepted": @(accepted),
             @"submitted": @(submitted), @"generatedAtCaptureSize": @(generated),
-            @"pairsRan": @(ran), @"pairsMissed": @(misses),
+            @"pairsRan": @(10 - stats.misses), @"pairsMissed": @(stats.misses),
             @"eightBitAverageMs": @(round(avg8 * 10) / 10.0), @"eightBitWorstMs": @(round(worst8 * 10) / 10.0), @"eightBitRan": @(ran8),
-            @"averagePairLatencyMs": @(round(average * 10) / 10.0), @"worstPairLatencyMs": @(round(worst * 10) / 10.0),
+            @"x3": @[ extraStats[0][0], extraStats[0][1], extraStats[0][2], extraStats[0][3] ],
+            @"f60": @[ extraStats[1][0], extraStats[1][1], extraStats[1][2], extraStats[1][3] ],
+            @"averagePairLatencyMs": @(round(stats.average * 10) / 10.0), @"worstPairLatencyMs": @(round(stats.worst * 10) / 10.0),
             @"error": (message ?: submitFailure ?: @""),
             @"scope": @"real GPU 10-bit SDR ('x420') interpolation at 3840x1608 with 1600 adaptive inference; 10-pair sustained timing over the 40 ms pair budget; no GUI" };
         NSData *json = [NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil];
