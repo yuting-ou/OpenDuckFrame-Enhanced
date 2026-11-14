@@ -5,6 +5,7 @@ import Darwin
 import Metal
 import MetalFX
 @preconcurrency import ScreenCaptureKit
+import VideoToolbox
 
 extension Notification.Name {
     static let odfMotionPlusChanged = Notification.Name("openduckframe.motionPlusChanged")
@@ -607,6 +608,13 @@ struct RecentEnhancementSource: Codable, Equatable {
 enum LiveEngineSelection {
     static let engines = ["rife.metal", "apple.lowlatency", "apple.frc"]
 
+    static var defaultSelection: (engine: String, model: String, quality: String) {
+        if #available(macOS 26.0, *), VTLowLatencyFrameInterpolationConfiguration.isSupported {
+            return ("apple.lowlatency", "vt.llfi.temporal.1", "normal")
+        }
+        return ("rife.metal", "rife-v4.25", "fast")
+    }
+
     static func fromPopup(_ index: Int, quality: String) -> (engine: String, model: String) {
         let engine = engines.indices.contains(index) ? engines[index] : engines[0]
         switch engine {
@@ -779,8 +787,8 @@ struct EnhancementProfile: Codable, Equatable {
     var sourceTitle = ""
     var sourceBundleIdentifier = ""
     var interpolationEnabled = true
-    var interpolationEngineID = "rife.metal"
-    var interpolationQuality = "fast"
+    var interpolationEngineID = LiveEngineSelection.defaultSelection.engine
+    var interpolationQuality = LiveEngineSelection.defaultSelection.quality
     var rifeStreamEnabled = true
     var rate = RateRequest.multiplier(2)
     var scaleEnabled = false
@@ -802,7 +810,7 @@ struct EnhancementProfile: Codable, Equatable {
     var automaticVideoCadence = false
     var configName = "默认"
     var configID: String? = nil
-    var modelID = "rife-v4.25"
+    var modelID = LiveEngineSelection.defaultSelection.model
     var recents: [RecentEnhancementSource] = []
 
     var sourceWindowResizeActive: Bool {
@@ -1992,6 +2000,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         static let brand = NSToolbarItem.Identifier("odf.brand")
         static let pages = NSToolbarItem.Identifier("odf.pages")
         static let compare = NSToolbarItem.Identifier("odf.compare")
+        static let update = NSToolbarItem.Identifier("odf.update")
         static let settings = NSToolbarItem.Identifier("odf.settings")
     }
 
@@ -2009,11 +2018,20 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         let compare: [NSToolbarItem.Identifier] = SPRifeExperiments.available && !SPRifeExperiments.airBeta ? [ToolbarID.compare] : []
-        return [ToolbarID.brand, .flexibleSpace, ToolbarID.pages, .flexibleSpace] + compare + [ToolbarID.settings]
+        var items = [ToolbarID.brand, .flexibleSpace, ToolbarID.pages, .flexibleSpace] + compare
+#if !SP_APP_STORE
+        if SPSoftwareUpdater.hasAvailableUpdate { items.append(ToolbarID.update) }
+#endif
+        return items + [ToolbarID.settings]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
+        let items = toolbarDefaultItemIdentifiers(toolbar)
+#if !SP_APP_STORE
+        return items.contains(ToolbarID.update) ? items : items + [ToolbarID.update]
+#else
+        return items
+#endif
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
@@ -2056,6 +2074,32 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             item.toolTip = item.label
             compare.setAccessibilityLabel(item.label)
             item.visibilityPriority = .low
+#if !SP_APP_STORE
+        case ToolbarID.update:
+            let label = EnhancementText.t("Update Available", "有可用更新")
+            let symbol = NSImage(systemSymbolName: "arrow.down.to.line", accessibilityDescription: label) ?? NSImage()
+            let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+                symbol.draw(in: rect)
+                NSColor.systemBlue.set()
+                rect.fill(using: .sourceAtop)
+                return true
+            }
+            image.isTemplate = false
+            let button = NSButton(image: image, target: self, action: #selector(checkForUpdates))
+            button.isBordered = false
+            button.setAccessibilityLabel(label)
+            let container = NSView(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+            container.wantsLayer = true
+            container.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.12).cgColor
+            container.layer?.cornerRadius = 16
+            button.frame = container.bounds
+            button.autoresizingMask = [.width, .height]
+            container.addSubview(button)
+            item.view = container
+            item.label = label
+            item.toolTip = label
+            item.visibilityPriority = .high
+#endif
         case ToolbarID.settings:
             item.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
             item.label = EnhancementText.t("Settings", "设置")
@@ -2069,6 +2113,21 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         }
         return item
     }
+
+#if !SP_APP_STORE
+    @objc private func updateAvailabilityChanged() {
+        guard let toolbar = window?.toolbar else { return }
+        let index = toolbar.items.firstIndex { $0.itemIdentifier == ToolbarID.update }
+        if SPSoftwareUpdater.hasAvailableUpdate, index == nil,
+           let settingsIndex = toolbar.items.firstIndex(where: { $0.itemIdentifier == ToolbarID.settings }) {
+            toolbar.insertItem(withItemIdentifier: ToolbarID.update, at: settingsIndex)
+        } else if !SPSoftwareUpdater.hasAvailableUpdate, let index {
+            toolbar.removeItem(at: index)
+        }
+    }
+
+    @objc private func checkForUpdates() { SPSoftwareUpdater.checkForUpdates() }
+#endif
 
     @objc private func pageControlChanged(_ sender: NSSegmentedControl) {
         switch sender.selectedSegment {
@@ -3590,7 +3649,9 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                     : (enhancing ? EnhancementText.t("Apply Changes", "应用更改") : startTitle)
             }
         }
-        stopButton?.isHidden = !enhancing && !filePreparing
+        // Source preview and a failed initial plan still own a live capture.
+        let liveCaptureRunning = profile.sourceKind != "file" && capture.running
+        stopButton?.isHidden = !enhancing && !filePreparing && !liveCaptureRunning
         stopButton?.title = filePreparing && !enhancing
             ? EnhancementText.t("Cancel", "取消")
             : EnhancementText.t("Stop Enhancement", "关闭增强")
@@ -3896,6 +3957,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                 self?.statusLabel.stringValue = EnhancementText.runtime(text)
                 self?.statusLabel.textColor = failed ? .systemRed : .labelColor
                 if !failed, let self, self.capture.running { self.rememberRunningSource() }
+                self?.refreshActions()
             }
         }
         let sink = CaptureProcessorSink(processor)
@@ -3910,6 +3972,9 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             sink.processor.push(buffer, ptsNum: ptsNum, ptsDen: ptsDen, host: captureHost, readyHost: readyHost, generation: generation)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(motionChanged), name: .odfMotionPlusChanged, object: nil)
+#if !SP_APP_STORE
+        NotificationCenter.default.addObserver(self, selector: #selector(updateAvailabilityChanged), name: SPSoftwareUpdater.availabilityChanged, object: nil)
+#endif
         NotificationCenter.default.addObserver(self, selector: #selector(displayParametersChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(foregroundApplicationChanged), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(pendingTextChanged(_:)), name: NSControl.textDidChangeNotification, object: nil)
@@ -4405,7 +4470,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         profile.sourceKind = "window"
         showPage(0)
         refreshSourceBar()
-        windowSelectionList?.reloadWindows()
+        windowSelectionList?.refreshFromUser()
     }
     @objc private func chooseDisplay() {
 #if ODF_AIR_BETA_DIAGNOSTIC
@@ -5781,7 +5846,20 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             || (profile.sourceKind == "file" && profile.outputFullscreen != baseline.outputFullscreen)
         hasPendingFormChanges = formDiffers
         refreshActions()
-        let pending = formDiffers ? EnhancementText.t("Pending", "待应用") + " \(Self.engineDisplayName(profile.interpolationEngineID, model: profile.modelID)) \(rate)" : ""
+        let awaitingStart = profile.sourceKind != "file" && capture.running && !isEnhancing
+            && pendingApply == nil && !countdown.active && liveApplyFailure.isEmpty && reason.isEmpty
+            && statusLabel.textColor != .systemRed && statusLabel.textColor != .systemOrange
+            && (profile.interpolationEnabled || profile.scaleEnabled)
+        let pendingFeatures = [
+            profile.interpolationEnabled ? "\(Self.engineDisplayName(profile.interpolationEngineID, model: profile.modelID)) \(rate)" : "",
+            profile.scaleEnabled ? AppleSRSelection.title(profile.scaleEngineID) : ""
+        ].filter { !$0.isEmpty }.joined(separator: " + ")
+        let pending = (formDiffers || awaitingStart)
+            ? [EnhancementText.t("Pending", "待应用"), pendingFeatures].filter { !$0.isEmpty }.joined(separator: " ") : ""
+        if awaitingStart {
+            statusLabel.stringValue = [live, pending].filter { !$0.isEmpty }.joined(separator: " · ")
+            statusLabel.textColor = .secondaryLabelColor
+        }
         let sizeChain = profile.sourceKind != "file" && capture.running && processor.resolvedPlan.committed
             ? LiveSizeChain.text(lastStats, generation: capture.currentGeneration, config: processor.resolvedPlan.configVersion) : ""
         if !sizeChain.isEmpty, let chain = lastStats["sizeChain"] as? [String: Any], let w = chain["srInputWidth"] as? Int, let h = chain["srInputHeight"] as? Int, w > 0, h > 0 {
@@ -5801,7 +5879,8 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                   generation: capture.currentGeneration, config: processor.resolvedPlan.configVersion,
                   running: capture.running, paused: capture.paused),
               let runtime = stats["airWindowOptimization"] as? [String: Any],
-              runtime["requestEligible"] as? Bool == true else {
+              runtime["requestEligible"] as? Bool == true,
+              runtime["enabled"] as? Bool == true else {
             if !lastWindowOptimizationStatus.isEmpty, statusLabel.stringValue == lastWindowOptimizationStatus {
                 statusLabel.stringValue = ""
             }
@@ -6623,7 +6702,16 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
                 ? EnhancementText.t("The selected output display is unavailable.", "所选输出显示器不可用。")
                 : EnhancementText.t("Waiting for the target content position; output remains hidden.", "正在等待目标内容位置，增强画面暂时隐藏。")
             statusLabel.textColor = .systemOrange
-        } else if state.contentRectVerified && outputFrame != nil { targetGeometryWarned = false }
+        } else if state.contentRectVerified && outputFrame != nil {
+            if targetGeometryWarned && planActive && [
+                EnhancementText.t("The selected output display is unavailable.", "所选输出显示器不可用。"),
+                EnhancementText.t("Waiting for the target content position; output remains hidden.", "正在等待目标内容位置，增强画面暂时隐藏。")
+            ].contains(statusLabel.stringValue) {
+                statusLabel.stringValue = EnhancementText.t("Enhancement running", "增强运行")
+                statusLabel.textColor = .labelColor
+            }
+            targetGeometryWarned = false
+        }
         var hudFrame = state.frame
         if planActive && alignedInput && state.contentRectVerified, let frame = outputFrame, let panel = outputWindow {
             let followsWindow: Bool
