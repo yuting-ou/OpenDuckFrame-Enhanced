@@ -101,7 +101,7 @@ private enum WorkbenchStyle {
             ("文件插帧运行中。", "File frame generation is active."),
             ("文件插帧需要已打开的 SDR 视频帧。", "Open an SDR video frame before applying frame generation."),
             ("文件插帧准备失败。", "File frame generation could not be prepared."),
-            ("文件 RIFE 需要完整 SDR 8 位 NV12 帧、已知色彩信息和最高 3840×2160 的偶数尺寸。", "File RIFE needs uncropped SDR 8-bit NV12, known color information, and even dimensions up to 3840×2160."),
+            ("文件 RIFE 需要 SDR 帧、已知色彩信息和最高 3840×2160 的偶数尺寸（HDR 暂不支持）。", "File RIFE needs SDR frames with known color information and even dimensions up to 3840×2160 (HDR is not supported yet)."),
             ("所选 RIFE 模型不可用。", "The selected RIFE model is unavailable."),
             ("所选 RIFE 质量档位不可用。", "The selected RIFE quality is unavailable."),
             ("RIFE 模型准备失败。", "RIFE model preparation failed."),
@@ -5529,7 +5529,9 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         // A preset saved for another source size must not reject the whole
         // plan (including interpolation) just because its scaler target is
         // invalid for this file. Disable scaling for this file instead.
-        let effectiveScale = request.scaleEnabled && fileScaleEligible(
+        // Mutable: a failed scaler preparation degrades the plan to
+        // interpolation-only instead of taking the whole apply down.
+        var effectiveScale = request.scaleEnabled && fileScaleEligible(
             engine: request.scaleEngineID, source: fileSource,
             outputWidth: request.outputWidth, outputHeight: request.outputHeight)
         fileApplyError = ""
@@ -5621,7 +5623,13 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         func prepareScaler() {
             guard self.filePreparing, self.filePrepareToken == token else { return }
             guard effectiveScale else { finish(true, ""); return }
-            player.workbenchPrepareFileScaler(engine: request.scaleEngineID, variant: request.scaleQualityID, width: request.outputWidth, height: request.outputHeight, completion: finish)
+            player.workbenchPrepareFileScaler(engine: request.scaleEngineID, variant: request.scaleQualityID, width: request.outputWidth, height: request.outputHeight) { ready, message in
+                // The upscale must not take interpolation down with it: drop
+                // the scaler and commit the interpolation-only plan.
+                guard self.filePreparing, self.filePrepareToken == token, !ready else { finish(ready, message); return }
+                effectiveScale = false
+                finish(true, "")
+            }
         }
         if useRife {
             let performance = FileInterpolationPerformance.plan(rate: request.rate, sourceWidth: fileSource.0, sourceHeight: fileSource.1)

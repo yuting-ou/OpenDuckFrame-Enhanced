@@ -1659,6 +1659,7 @@ static void decoderOutputCallback(void *refCon, void *sourceFrameRefCon, OSStatu
 - (int)setupWithCodecParameters:(const AVCodecParameters *)par
               timeBaseNumerator:(int64_t)tbNum
             timeBaseDenominator:(int64_t)tbDen {
+    if (getenv("SP_DEBUG")) NSLog(@"[VT-SETUP] par=%p format=%d codec=%d", (void *)par, (int)par->format, (int)par->codec_id);
     [self shutdown];
 
     tbNum_ = tbNum > 0 ? tbNum : 1;
@@ -1800,12 +1801,12 @@ static void decoderOutputCallback(void *refCon, void *sourceFrameRefCon, OSStatu
     NSDictionary *decoderSpec = @{
         (__bridge NSString *)kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder : @NO,
     };
-    // 10-bit SDR sources (e.g. HEVC Main 10 web releases with BT.709 color)
-    // decode to 8-bit NV12: the file enhancement gates require 8-bit frames,
-    // and the hardware converter restores interpolation and upscaling for
-    // these files. 10-bit HDR (PQ/HLG) keeps native 10-bit output for the HDR
-    // render path; the 10-bit entries stay as a fallback if VT declines 8-bit
-    // output for a stream.
+    // 10-bit SDR sources (HEVC Main 10 web releases with BT.709 color) decode
+    // to 8-bit NV12: the file enhancement pipeline measures its budget on the
+    // proven 8-bit path, and per-frame VT depth conversion on 4K 10-bit
+    // buffers falls behind the target rate. 10-bit HDR (PQ/HLG) keeps native
+    // 10-bit output for the HDR render path; the 10-bit entries remain as a
+    // fallback if VT declines 8-bit output for a stream.
     BOOL tenBitSDR = NO;
     if (const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get((enum AVPixelFormat)par->format)) {
         if (descriptor->comp[0].depth > 8) {

@@ -1632,6 +1632,7 @@ static bool spThumbDustColor(CGImageRef cg, float *hue, float *sat, float *luma)
         _shared->doviIPT = doviIPT;
         if (videoParams) {
             _shared->videoPar = avcodec_parameters_alloc();
+            if (getenv("SP_DEBUG")) NSLog(@"[PARALLOC] thumbnailer par=%p", (void*)_shared->videoPar);
             if (_shared->videoPar && avcodec_parameters_copy(_shared->videoPar, videoParams) < 0) {
                 avcodec_parameters_free(&_shared->videoPar);
             }

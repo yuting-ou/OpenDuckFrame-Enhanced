@@ -1836,6 +1836,7 @@ static BOOL spProbeStreamEmitsBFrames(NSString *path) {
     if (_videoParCopy) avcodec_parameters_free(&_videoParCopy);
     if (_thumbVideoPar) avcodec_parameters_free(&_thumbVideoPar);
     _videoParCopy = avcodec_parameters_alloc();
+    if (getenv("SP_DEBUG")) NSLog(@"[PARALLOC] videoParCopy par=%p", (void*)_videoParCopy);
     if (_videoParCopy) avcodec_parameters_copy(_videoParCopy, par);
     _thumbVideoPar = avcodec_parameters_alloc();
     if (_thumbVideoPar) avcodec_parameters_copy(_thumbVideoPar, par);
@@ -7426,6 +7427,7 @@ static void spApplyDecodeQoS() {
                         rpar->height = 0;
                         SPVideoDecoder *vt2 = [[SPVideoDecoder alloc] init];
                         vt2.spLogId = _spLogId;
+                        if (getenv("SP_DEBUG")) NSLog(@"[VT2] rpar->format=%d width=%d extradata=%d", (int)rpar->format, (int)rpar->width, (int)rpar->extradata_size);
 
                         vt2.firstPacketHint = hevc ? sp::packetDataSnapshot(pkt) : nil;
                         int vtSetupRet = [vt2 setupWithCodecParameters:rpar
