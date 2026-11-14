@@ -241,7 +241,7 @@ static void SPFileRifeCopyAttachments(CVPixelBufferRef from,CVPixelBufferRef to)
         }
         NSArray<NSNumber *> *warmPhases=self->_bridgeCount>=4?@[@0.2,@0.4,@0.6,@0.8]:(self->_bridgeCount==3?@[@0.25,@0.5,@0.75]:(self->_bridgeCount==2?@[@0.3,@0.7]:@[@0.5]));
         BOOL submitted=[self submitPrevious:sample current:sample previousPTSUs:0 currentPTSUs:33333 phases:warmPhases token:1 completion:^(uint64_t token,NSArray<SPOwnedPixelBuffer *> *out,double latency,NSError *failure){
-            (void)token;(void)latency;BOOL ready=!failure&&out.count==warmPhases.count&&CVPixelBufferGetWidth(out.firstObject.buffer)==(size_t)w&&CVPixelBufferGetHeight(out.firstObject.buffer)==(size_t)h&&CVPixelBufferGetPixelFormatType(out.firstObject.buffer)==f;
+            (void)token;(void)latency;OSType outFormat=out.firstObject.buffer?CVPixelBufferGetPixelFormatType(out.firstObject.buffer):0;BOOL ready=!failure&&out.count==warmPhases.count&&out.firstObject.buffer&&CVPixelBufferGetWidth(out.firstObject.buffer)==(size_t)w&&CVPixelBufferGetHeight(out.firstObject.buffer)==(size_t)h&&(outFormat==f||outFormat==kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange||outFormat==kCVPixelFormatType_420YpCbCr8BiPlanarFullRange);
             CVPixelBufferRelease(sample);if(!ready)[self invalidate];completion(ready,failure.localizedDescription?:@"");
         }];
         if(!submitted){CVPixelBufferRelease(sample);[self invalidate];completion(NO,@"RIFE 预检任务繁忙。");}
