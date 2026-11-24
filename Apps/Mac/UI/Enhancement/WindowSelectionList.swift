@@ -44,7 +44,8 @@ final class WindowSelectionList: NSView, NSTableViewDataSource, NSTableViewDeleg
     private var updating = false
     private var selectedID: CGWindowID?
     private let table = WindowSelectionTable()
-    private let footer = NSTextField(labelWithString: "")
+    private let footer = NSTextField(wrappingLabelWithString: "")
+    private let permissionSettings = NSButton()
 
     init(permission: ScreenCapturePermission? = nil, select: @escaping (SCWindow) -> Void) {
         let permission = permission ?? .shared
@@ -56,6 +57,11 @@ final class WindowSelectionList: NSView, NSTableViewDataSource, NSTableViewDeleg
         heading.font = .systemFont(ofSize: 14, weight: .semibold)
         let refresh = NSButton(title: EnhancementText.t("Refresh list", "刷新列表"), target: self, action: #selector(refreshRequested))
         refresh.bezelStyle = .rounded
+        permissionSettings.title = EnhancementText.t("Open System Settings", "打开系统设置")
+        permissionSettings.target = self
+        permissionSettings.action = #selector(openPermissionSettings)
+        permissionSettings.bezelStyle = .rounded
+        permissionSettings.isHidden = true
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -75,14 +81,18 @@ final class WindowSelectionList: NSView, NSTableViewDataSource, NSTableViewDeleg
         scroll.documentView = table
         footer.textColor = .secondaryLabelColor
         footer.font = .systemFont(ofSize: 11)
-        footer.lineBreakMode = .byTruncatingTail
-        for view in [heading, refresh, scroll, footer] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
+        footer.lineBreakMode = .byWordWrapping
+        footer.maximumNumberOfLines = 0
+        for view in [heading, refresh, permissionSettings, scroll, footer] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 218),
             heading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             heading.centerYAnchor.constraint(equalTo: refresh.centerYAnchor),
             refresh.trailingAnchor.constraint(equalTo: trailingAnchor),
             refresh.topAnchor.constraint(equalTo: topAnchor),
+            permissionSettings.trailingAnchor.constraint(equalTo: refresh.leadingAnchor, constant: -8),
+            permissionSettings.centerYAnchor.constraint(equalTo: refresh.centerYAnchor),
+            permissionSettings.leadingAnchor.constraint(greaterThanOrEqualTo: heading.trailingAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: refresh.bottomAnchor, constant: 4),
@@ -118,20 +128,19 @@ final class WindowSelectionList: NSView, NSTableViewDataSource, NSTableViewDeleg
     }
 
     private func showPermissionHelp() {
-        guard let window, window.attachedSheet == nil else { return }
-        let alert = NSAlert()
-        alert.messageText = EnhancementText.t("Screen Recording access needed", "需要屏幕录制权限")
-        alert.informativeText = String(format: EnhancementText.t(
-            "Refreshing the window list requires Screen Recording access. Allow OpenDuckFrame in System Settings.\n\nIf it is already enabled but still does not work, remove the old OpenDuckFrame entry, use + to add the current app at %@, and follow any macOS prompt to reopen it.",
-            "刷新窗口列表需要屏幕录制权限，请在系统设置中允许 OpenDuckFrame。\n\n如果开关已打开但仍无法使用，请先移除旧的 OpenDuckFrame，再点击“＋”添加当前应用（%@），并按 macOS 提示重新打开。"),
+        // The system request can return before its dialog closes. Keep recovery
+        // inline instead of stacking an app-owned sheet over that dialog.
+        permissionSettings.isHidden = false
+        footer.stringValue = String(format: EnhancementText.t(
+            "Screen Recording access is needed. Allow OpenDuckFrame in System Settings. If the switch is already on but access still fails, remove the old OpenDuckFrame entry, use + to add the current app at %@, and follow any macOS prompt to reopen it.",
+            "需要屏幕录制权限，请在系统设置中允许 OpenDuckFrame。开关已打开但仍不可用时，请移除旧的 OpenDuckFrame，点击“＋”添加当前应用（%@），并按系统提示重新打开。"),
             Bundle.main.bundleURL.path)
-        alert.addButton(withTitle: EnhancementText.t("Open System Settings", "打开系统设置"))
-        alert.addButton(withTitle: EnhancementText.t("Cancel", "取消"))
-        alert.beginSheetModal(for: window) { response in
-            guard response == .alertFirstButtonReturn,
-                  let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else { return }
-            NSWorkspace.shared.open(url)
-        }
+        footer.toolTip = footer.stringValue
+    }
+
+    @objc private func openPermissionSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc func reloadWindows() {
@@ -145,10 +154,13 @@ final class WindowSelectionList: NSView, NSTableViewDataSource, NSTableViewDeleg
             rows = []
             table.reloadData()
             updating = false
-            footer.stringValue = EnhancementText.t("Screen Recording access is needed. Click Refresh list to allow access.", "需要屏幕录制权限，点击“刷新列表”申请授权。")
-            footer.toolTip = footer.stringValue
+            if permissionSettings.isHidden {
+                footer.stringValue = EnhancementText.t("Screen Recording access is needed. Click Refresh list to allow access.", "需要屏幕录制权限，点击“刷新列表”申请授权。")
+                footer.toolTip = footer.stringValue
+            }
             return
         }
+        permissionSettings.isHidden = true
         footer.stringValue = EnhancementText.t("Loading windows…", "正在获取窗口…")
         footer.toolTip = nil
         Task { @MainActor [weak self] in
