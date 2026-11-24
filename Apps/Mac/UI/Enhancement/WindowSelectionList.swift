@@ -128,12 +128,11 @@ final class WindowSelectionList: NSView, NSTableViewDataSource, NSTableViewDeleg
     }
 
     private func showPermissionHelp() {
-        // The system request can return before its dialog closes. Keep recovery
-        // inline instead of stacking an app-owned sheet over that dialog.
+        // The system dialog may still be open when its request returns; keep recovery inline.
         permissionSettings.isHidden = false
         footer.stringValue = String(format: EnhancementText.t(
-            "Screen Recording access is needed. Allow OpenDuckFrame in System Settings. If the switch is already on but access still fails, remove the old OpenDuckFrame entry, use + to add the current app at %@, and follow any macOS prompt to reopen it.",
-            "需要屏幕录制权限，请在系统设置中允许 OpenDuckFrame。开关已打开但仍不可用时，请移除旧的 OpenDuckFrame，点击“＋”添加当前应用（%@），并按系统提示重新打开。"),
+            "Refreshing the window list requires Screen Recording access. Allow OpenDuckFrame in System Settings.\n\nIf it is already enabled but still does not work, remove the old OpenDuckFrame entry, use + to add the current app at %@, and follow any macOS prompt to reopen it.",
+            "刷新窗口列表需要屏幕录制权限，请在系统设置中允许 OpenDuckFrame。\n\n如果开关已打开但仍无法使用，请先移除旧的 OpenDuckFrame，再点击“＋”添加当前应用（%@），并按 macOS 提示重新打开。"),
             Bundle.main.bundleURL.path)
         footer.toolTip = footer.stringValue
     }

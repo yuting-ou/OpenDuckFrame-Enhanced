@@ -11,7 +11,8 @@
 > - **Beginner-friendly workbench**: one-click enhance plus three preferences: Smoother (X3, interpolation only), Auto (X2, interpolation only), and Clearer (ArtCNN C4F16 + interpolation on 1080p, upscaling off on 4K). Advanced controls stay collapsed.
 > - **Instant start**: file mode starts immediately (no 3 s countdown); start delay configurable 0–20 s (0 = instant).
 > - **Interpolation health indicator**: live "working / not interpolating / awaiting keyframe" state with generated-frame coverage.
-> - **Faster super resolution**: ArtCNN now runs on the CoreML Neural Engine with vImage conversion and skips the luma scale that the model overwrites; 1080p→4K takes about 23.3 ms for C4F16 and 30.7 ms for C4F32, sustaining a 25 fps source on its own. Enabling super resolution and interpolation together reaches about 34 fps, below the X2 target; use interpolation alone for full rate.
+> - **Live 720p interpolation option**: Apple low-latency window/display profiles can keep automatic detail or cap interpolation inference at 720p. Originals and output keep the source dimensions; generated frames may look softer and target FPS is not guaranteed.
+> - **Lower-overhead super resolution**: ArtCNN runs on the CoreML Neural Engine with vImage conversion and skips the luma scale that the model overwrites. Actual speed and quality depend on the source, settings and Mac; enabling super resolution and interpolation together costs more than either alone.
 > - **Tunable pre-render**: `ODF_BUFFER_SECONDS` environment variable adjusts the lookahead buffer.
 
 First use and resetting the default preset select **Apple low latency, X2** on supported macOS 26+ devices, with ODF-VFI fast X2 as the fallback on other supported Macs. Saved engine choices are preserved. ODF-VFI remains selectable: it is a four-stage structural reduction of RIFE 4.25 using the upstream weights without retraining. Existing RIFE 4.25 profiles remain compatible and run ODF-VFI; the app validates the actual four-stage weights when loading. Visual results remain content-dependent.
@@ -46,16 +47,16 @@ and English. Experimental backends and constraints are described in [the feature
 
 ## Get started
 
-Download the [Mac app](https://github.com/Jun-bao/OpenDuckFrame/releases/latest/download/OpenDuckFrame.dmg)
-or [browse releases](https://github.com/Jun-bao/OpenDuckFrame/releases).
+Download the [Mac app](https://github.com/yuting-ou/OpenDuckFrame-Enhanced/releases/latest/download/OpenDuckFrame.dmg)
+or [browse releases](https://github.com/yuting-ou/OpenDuckFrame-Enhanced/releases).
 The community download is ad-hoc signed and **not Apple notarized**, so macOS may
 block its first launch. Only allow it in System Settings → Privacy & Security if
 you trust the source. Updates may require granting Screen Recording or
 Accessibility access again because this community lane uses ad-hoc signing. Apple silicon and macOS 14+ are required.
 
 This Enhanced build does not connect to the upstream update feed, so an
-upstream release cannot replace the enhanced features. Build enhanced versions
-from this repository instead.
+upstream release cannot replace the enhanced features. Download newer Enhanced
+builds from this repository's Releases page.
 
 1. Open **File → Quality Workbench** (⇧⌘E).
 2. Choose a window, display, or video file input. macOS asks for Screen Recording
@@ -88,6 +89,12 @@ a requested processing mode, not a guarantee of a particular displayed frame rat
 Live Apple low latency fits inference to the device's supported size and restores
 generated frames to source dimensions. The workbench shows the inference size;
 reduced inference can soften generated detail. File input retains its native size requirements.
+For live window/display profiles, **Interpolation detail** can keep Automatic or
+cap inference at 720p. Only generated-frame processing is reduced; originals and
+output keep the source dimensions, and the smoother setting does not guarantee
+target FPS. When Screen Recording access is unavailable, the window list keeps
+recovery steps inline and offers **Open System Settings** without covering the
+system prompt.
 Enhanced live output also reserves at least 80 ms of adaptive buffering, subject to
 time/memory caps, and keeps eligible frames in order within a bounded lag window.
 This trades some input responsiveness for more consistent delivery; it does not guarantee 60 FPS.
@@ -112,8 +119,8 @@ and these build tools:
 
 ```sh
 brew install xcodegen meson ninja cmake pkg-config
-git clone https://github.com/Jun-bao/OpenDuckFrame.git
-cd OpenDuckFrame
+git clone https://github.com/yuting-ou/OpenDuckFrame-Enhanced.git
+cd OpenDuckFrame-Enhanced
 ./Apps/Mac/Scripts/build.sh Debug
 open .build/Build/Products/Debug/OpenDuckFrame.app
 ```

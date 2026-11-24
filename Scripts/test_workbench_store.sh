@@ -30,6 +30,8 @@ test=test.replace('// ACTUAL_DELAY_HANDLER',delay_handler)
 test=test.replace('// ACTUAL_FORM_DIFFERENCE',form_difference)
 test=test.replace('// ACTUAL_REFRESH_PLAN_LABEL',refresh_plan)
 test=test.replace('// ACTUAL_ENGINE_DISPLAY_NAME',engine_name)
+visibility=source.split('private func applyModeVisibility() {',1)[1].split('        captureCapPopup.isEnabled',1)[0]
+test=test.replace('// ACTUAL_INTERPOLATION_VISIBILITY',visibility)
 pathlib.Path(sys.argv[2]).write_text(prefix+'\n'+test)
 PY
 xcrun swiftc -parse-as-library "$ROOT/Apps/Mac/UI/Enhancement/LiveFPSOverlay.swift" "$TEST_DIR/source.swift" -o "$TEST_DIR/test"

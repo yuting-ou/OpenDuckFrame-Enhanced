@@ -11,7 +11,8 @@
 > - **新手友好工作台**：一键增强 + 三偏好——更流畅（X3，仅插帧）、自动（X2，仅插帧）、更清晰（1080p 用 ArtCNN C4F16 超分 + 插帧，4K 自动关超分）；高级参数默认折叠。
 > - **秒插帧**：文件模式默认立即启动（无需 3 秒倒计时）；启动延迟 0–20 秒可设，0 = 立即。
 > - **插帧生效检测**：实时显示「生效中 / 未生效 / 等待关键帧」状态与生成帧覆盖率。
-> - **超分提速**：ArtCNN 改用 CoreML ANE + vImage，并只缩放色度、跳过会被模型覆盖的 luma 缩放；1080p→4K 单帧 C4F16 约 23.3 ms、C4F32 约 30.7 ms，超分单独可跟满 25 fps 片源。超分与插帧同开约 34 fps（低于 X2 目标，追求满帧请只开插帧）。
+> - **实时 720p 插帧挡位**：Apple 低延迟的窗口／显示器配置可选择自动画质或把插帧推理限制到 720p。原帧和输出仍保持来源尺寸；生成的中间帧可能变软，也不保证达到目标帧率。
+> - **降低超分转换开销**：ArtCNN 改用 CoreML ANE + vImage，并只缩放色度、跳过会被模型覆盖的 luma 缩放。实际速度与画质取决于片源、设置和 Mac；超分与插帧同开比单独开启任一功能更耗性能。
 > - **提前渲染可调**：`ODF_BUFFER_SECONDS` 环境变量调节前瞻缓冲秒数。
 
 首次使用或恢复默认配置时，受支持的 macOS 26+ 设备默认使用 **Apple 低延迟、2 倍补帧**；其他受支持的 Mac 默认使用 ODF-VFI fast X2。已有配置保存的引擎选择会保留。ODF-VFI 四阶段精简版仍可选择，由 RIFE 4.25 做结构精简得到，沿用上游权重、未重新训练。现有 RIFE 4.25 配置保持兼容并使用 ODF-VFI，加载时会校验实际四阶段权重；画质表现仍取决于素材。
@@ -37,14 +38,14 @@ OpenDuckFrame 是一款原生 Mac 画质增强应用。浏览器视频、游戏�
 
 ## 开始使用
 
-下载 [Mac 安装包](https://github.com/Jun-bao/OpenDuckFrame/releases/latest/download/OpenDuckFrame.dmg)，
-或查看 [版本列表](https://github.com/Jun-bao/OpenDuckFrame/releases)。
+下载 [Mac 安装包](https://github.com/yuting-ou/OpenDuckFrame-Enhanced/releases/latest/download/OpenDuckFrame.dmg)，
+或查看 [版本列表](https://github.com/yuting-ou/OpenDuckFrame-Enhanced/releases)。
 社区安装包使用临时签名，**未经过 Apple 公证**，首次打开可能被 macOS 拦截。
 确认信任来源后，由你在系统设置 → 隐私与安全性中决定是否允许打开。
 由于社区版使用临时签名，升级后可能需要重新授予屏幕录制或辅助功能权限。
 需要 Apple 芯片和 macOS 14 或更高版本。
 
-本增强版不连接上游更新源，避免上游发版覆盖增强功能；请从本仓库构建增强版。
+本增强版不连接上游更新源，避免上游发版覆盖增强功能；请从本仓库的 Releases 页面下载新的增强版。
 
 1. 打开 **文件 → 画质工作台**（⇧⌘E）。
 2. 选择窗口、显示器或视频文件作为输入。采集窗口或显示器时，按 macOS 提示授予屏幕录制权限。
@@ -71,6 +72,7 @@ OpenDuckFrame 是一款原生 Mac 画质增强应用。浏览器视频、游戏�
 目前不支持 Intel Mac、Windows、iPhone 或 iPad。倍率代表请求的处理模式，实际显示帧率需要以运行结果为准。
 
 Apple 低延迟在窗口／显示器模式下会按设备支持的尺寸处理，再将生成帧恢复到来源尺寸；工作台显示实际处理尺寸。缩小处理尺寸可能使生成帧的细节变软，文件输入仍保留原有尺寸要求。
+窗口／显示器配置的“插帧画质”可选择自动或限制到 720p；只缩小生成帧的处理尺寸，原帧和输出仍保持来源尺寸，流畅优先也不保证达到目标帧率。屏幕录制权限不可用时，窗口列表会内联显示恢复步骤并提供“打开系统设置”，不会遮住系统提示。
 实时增强还会在时间与内存上限内预留至少 80 毫秒自适应缓冲，并在有限延迟内按顺序呈现有效帧，以部分操作响应速度换取更稳定的输出；这不保证达到 60 FPS。
 0.5.0 为苹果低延迟实时增强增加可选的“自动视频”：估计常见 24／25／30 FPS 并整理播放时间轴，申请更多缓冲（140 毫秒，受上限约束）。默认仍为“通用窗口”。声音由原应用播放，可能感知到音画偏移。
 
@@ -84,8 +86,8 @@ Fast X2 窗口优化按 GPU 能力、内存上限和准备时的实测耗时判�
 
 ```sh
 brew install xcodegen meson ninja cmake pkg-config
-git clone https://github.com/Jun-bao/OpenDuckFrame.git
-cd OpenDuckFrame
+git clone https://github.com/yuting-ou/OpenDuckFrame-Enhanced.git
+cd OpenDuckFrame-Enhanced
 ./Apps/Mac/Scripts/build.sh Debug
 open .build/Build/Products/Debug/OpenDuckFrame.app
 ```

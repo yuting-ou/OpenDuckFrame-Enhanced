@@ -51,6 +51,11 @@ conservative 720p pixel budget. Generated frames are resized back to the capture
 source dimensions; original frames, timestamps and output geometry are preserved.
 The workbench reports the actual inference size. This resizing does not enable
 super resolution and can soften generated detail. File preparation is unchanged.
+For live Apple low latency, **Interpolation detail** offers Automatic and 720p.
+Automatic keeps the runtime-supported size; 720p caps only intermediate
+interpolation inference. Original frames and output keep the captured source
+dimensions, while generated frames may look softer. The setting does not change
+file playback or guarantee the target FPS.
 For enhanced live output, Apple low latency requests a minimum 80 ms adaptive
 buffer, subject to the existing delay and memory caps. The presenter keeps the
 oldest eligible frame within two observed refresh periods, then catches up to

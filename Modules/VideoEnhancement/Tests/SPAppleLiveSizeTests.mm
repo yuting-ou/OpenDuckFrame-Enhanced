@@ -23,10 +23,10 @@ static CVPixelBufferRef source(int width, int height, int offset) {
     return buffer;
 }
 
-static NSDictionary *runSize(int width, int height, NSInteger slots) {
+static NSDictionary *runSize(int width, int height, NSInteger slots, int preset) {
     SPLowLatencyEngine *engine=[NSClassFromString(@"SPLowLatencyEngine") new];
     NSError *prepareError=nil;
-    BOOL prepared=[engine prepareLiveWidth:width height:height frames:slots error:&prepareError];
+    BOOL prepared=[engine prepareLiveWidth:width height:height frames:slots processingPreset:preset error:&prepareError];
     if (!prepared) return @{@"ok":@NO, @"error":prepareError.localizedDescription ?: @"prepare"};
     NSInteger maxDimension=1280, maxPixels=1280*720;
     if (@available(macOS 27.0, *)) {
@@ -37,6 +37,11 @@ static NSDictionary *runSize(int width, int height, NSInteger slots) {
         (maxDimension<=0 || (engine.width<=maxDimension && engine.height<=maxDimension)) &&
         (maxPixels<=0 || (int64_t)engine.width*engine.height<=maxPixels);
     BOOL unchangedSmall=width!=1280 || height!=720 || (engine.width==width && engine.height==height);
+    if (preset==720) bounded=bounded && engine.width<=1280 && engine.height<=1280 && (int64_t)engine.width*engine.height<=1280*720;
+    BOOL nativeFits=maxDimension>0 && maxPixels>0 && width<=maxDimension && height<=maxDimension && (int64_t)width*height<=maxPixels;
+    BOOL automaticUnchanged=preset!=0 || !nativeFits || engine.preparationFallbackReason.length>0 || (engine.width==width && engine.height==height);
+    BOOL aspectPreserved=engine.width<=width && engine.height<=height &&
+        llabs((int64_t)engine.width*height-(int64_t)engine.height*width)<=2*MAX(width,height);
     CVPixelBufferRef a=source(width,height,0), b=source(width,height,24);
     NSArray *phases=slots==2 ? @[@0.25,@0.5,@0.75] : @[@0.5];
     dispatch_semaphore_t done=dispatch_semaphore_create(0);
@@ -54,24 +59,35 @@ static NSDictionary *runSize(int width, int height, NSInteger slots) {
         CFTypeRef primaries=CVBufferGetAttachment(output.buffer,kCVImageBufferColorPrimariesKey,NULL);
         color=color && primaries && CFEqual(primaries,kCVImageBufferColorPrimaries_ITU_R_709_2);
     }
-    BOOL sourceIntact=a && b && CVPixelBufferGetWidth(a)==width && CVPixelBufferGetHeight(b)==height;
+    BOOL sourceIntact=a && b && CVPixelBufferGetWidth(a)==width && CVPixelBufferGetHeight(a)==height &&
+        CVPixelBufferGetWidth(b)==width && CVPixelBufferGetHeight(b)==height;
     if(a) CVPixelBufferRelease(a); if(b) CVPixelBufferRelease(b);
-    NSDictionary *report=@{@"ok":@(prepared && bounded && unchangedSmall && submitted && finished && geometry && color && tokenOK && !runError && sourceIntact),
-        @"input":@[@(width),@(height)], @"processing":@[@(engine.width),@(engine.height)],
+    NSDictionary *report=@{@"ok":@(prepared && bounded && unchangedSmall && automaticUnchanged && aspectPreserved && submitted && finished && geometry && color && tokenOK && !runError && sourceIntact),
+        @"input":@[@(width),@(height)], @"processing":@[@(engine.width),@(engine.height)], @"processingPreset":@(preset),
         @"phases":phases, @"outputCount":@(outputs.count), @"sourceGeometryPreserved":@(sourceIntact),
         @"outputGeometryPreserved":@(geometry), @"bt709Preserved":@(color), @"bounded":@(bounded),
+        @"automaticUnchanged":@(automaticUnchanged), @"aspectPreserved":@(aspectPreserved),
         @"error":runError.localizedDescription ?: @"", @"fallbackReason":engine.preparationFallbackReason};
     [engine invalidate]; return report;
 }
 
-static NSDictionary *runLivePlan(void) {
+static NSDictionary *runLivePlan(int preset) {
     SPLiveProcessor *processor=[NSClassFromString(@"SPLiveProcessor") new];
     [processor adoptSourceGeneration:7];
     SPLivePlanRequest *request=[NSClassFromString(@"SPLivePlanRequest") new];
     request.interpolationEnabled=YES; request.engineID=@"apple.lowlatency"; request.modelID=@"vt.llfi.temporal.1";
     request.rateKind=SPLiveRateMultiplier; request.multiplier=2; request.displayRefreshHz=60;
     request.captureSourceKind=SPLiveCaptureSourceKindWindow;
-    [processor updateRequest:request];
+    BOOL defaultAutomatic=request.lowLatencyProcessingPreset==0;
+    request.lowLatencyProcessingPreset=preset;
+    request.outputWidth=2560; request.outputHeight=1410;
+    SPLivePlanRequest *copy=[request copy];
+    request.lowLatencyProcessingPreset=preset==720 ? 0 : 720;
+    BOOL copyPreserved=copy!=request && copy.lowLatencyProcessingPreset==preset &&
+        copy.outputWidth==2560 && copy.outputHeight==1410 && copy.multiplier==2 &&
+        copy.captureSourceKind==SPLiveCaptureSourceKindWindow;
+    [processor updateRequest:copy];
+    copy.lowLatencyProcessingPreset=preset==720 ? 0 : 720;
     CVPixelBufferRef first=source(2560,1410,0);
     [processor pushPixelBuffer:first ptsNum:0 ptsDen:30 host:mach_absolute_time() generation:7];
     CVPixelBufferRelease(first);
@@ -83,12 +99,18 @@ static NSDictionary *runLivePlan(void) {
     }
     NSDictionary *stats=processor.stats;
     for(int i=0;i<100 && [stats[@"syntheticOK"] intValue]==0;++i) { usleep(10000); stats=processor.stats; }
-    BOOL ok=processor.resolvedPlan.committed && processor.resolvedPlan.interpolationActive &&
+    int processingWidth=[stats[@"lowLatencyProcessingWidth"] intValue], processingHeight=[stats[@"lowLatencyProcessingHeight"] intValue];
+    BOOL bounded=processingWidth>0 && processingHeight>0 && (preset!=720 ||
+        (processingWidth<=1280 && processingHeight<=1280 && (int64_t)processingWidth*processingHeight<=1280*720));
+    BOOL ok=defaultAutomatic && copyPreserved && bounded && processor.resolvedPlan.committed && processor.resolvedPlan.interpolationActive &&
         [stats[@"syntheticOK"] intValue]>0 && [stats[@"syntheticFail"] intValue]==0 &&
         fabs([stats[@"estimatedRequestedFPS"] doubleValue]-60)<0.1 &&
         [stats[@"sourceWidth"] intValue]==2560 && [stats[@"sourceHeight"] intValue]==1410 &&
+        [stats[@"lowLatencyProcessingPreset"] isEqual:@(preset)] &&
         processor.resolvedPlan.outputWidth==2560 && processor.resolvedPlan.outputHeight==1410;
     NSDictionary *result=@{@"ok":@(ok), @"targetFPS":stats[@"estimatedRequestedFPS"] ?: @(-1),
+        @"processingPreset":@(preset), @"processing":@[@(processingWidth),@(processingHeight)],
+        @"copyPreserved":@(copyPreserved), @"defaultAutomatic":@(defaultAutomatic),
         @"generated":stats[@"syntheticOK"] ?: @0, @"error":processor.resolvedPlan.unavailableReason ?: @""};
     [processor stop]; return result;
 }
@@ -98,15 +120,16 @@ int main(int argc,const char **argv) { @autoreleasepool {
     if(![NSClassFromString(@"SPLowLatencyEngine") isSupported]) { puts("SKIP: Apple low latency is unavailable on this Mac"); return 0; }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ @autoreleasepool {
         NSMutableArray *cases=[NSMutableArray array];
-        for(NSArray *size in @[@[@1280,@720,@1],@[@2560,@1410,@1],@[@5120,@2820,@2],@[@1410,@2560,@1]])
-            [cases addObject:runSize([size[0] intValue],[size[1] intValue],[size[2] integerValue])];
+        for(NSNumber *preset in @[@0,@720])
+            for(NSArray *size in @[@[@640,@360,@1],@[@1280,@720,@1],@[@1920,@1080,@1],@[@2560,@1410,@1],@[@5120,@2820,@2],@[@1410,@2560,@1]])
+                [cases addObject:runSize([size[0] intValue],[size[1] intValue],[size[2] integerValue],preset.intValue)];
         SPLowLatencyEngine *invalid=[NSClassFromString(@"SPLowLatencyEngine") new];
         NSError *error=nil;
-        BOOL oddRejected=![invalid prepareLiveWidth:1279 height:720 frames:1 error:&error] && error!=nil;
-        NSDictionary *live=runLivePlan();
-        BOOL ok=oddRejected && [live[@"ok"] boolValue];
+        BOOL oddRejected=![invalid prepareLiveWidth:1279 height:720 frames:1 processingPreset:720 error:&error] && error!=nil;
+        NSDictionary *live=runLivePlan(720), *automaticLive=runLivePlan(0);
+        BOOL ok=oddRejected && [live[@"ok"] boolValue] && [automaticLive[@"ok"] boolValue];
         for(NSDictionary *item in cases) ok=ok && [item[@"ok"] boolValue];
-        NSDictionary *result=@{@"ok":@(ok), @"cases":cases, @"oddRejected":@(oddRejected), @"livePlan":live,
+        NSDictionary *result=@{@"ok":@(ok), @"cases":cases, @"oddRejected":@(oddRejected), @"livePlan":live, @"automaticLivePlan":automaticLive,
             @"scope":@"Real Apple inference and live plan; synthetic inputs. No capture permission, window, drawable or physical FPS measurement."};
         NSData *json=[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingSortedKeys error:nil];
         fwrite(json.bytes,1,json.length,stdout); putchar('\n'); exit(ok?0:1);

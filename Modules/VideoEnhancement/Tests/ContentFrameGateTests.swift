@@ -29,25 +29,122 @@ import CoreVideo
         let fpsValue = gate.diagnostics(nowNs: 1_000_000_000)["contentDistinctFPS"] as? Double ?? -1
         precondition(abs(fpsValue - Double(fps)) < 0.1, "distinctFPS \(fpsValue)")
     }
-    static func benchmark() {
+    static func exactEqualityCases() {
+        var failures: [String] = []
         for format in [kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange] {
-            let gate = ContentFrameGate(), image = buffer(2560, 1440, format, 32)
-            let point = ContentFrameGate.sampleCoordinates(width: 2560, height: 1440)[0]
-            for i in 0..<600 {
+            let planar = format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            let points = ContentFrameGate.sampleCoordinates(width: 256, height: 144)
+            precondition(!points.contains { ($0.x == 0 && $0.y == 0) || ($0.x == 255 && $0.y == 143) })
+            let cases = planar ? ["sample-low-bit", "first-pixel", "last-pixel", "chroma-u", "chroma-v"]
+                               : ["sample-low-bit", "first-pixel", "last-pixel", "alpha"]
+            for name in cases {
+                let gate = ContentFrameGate(), image = buffer(256, 144, format, 32)
+                precondition(gate.evaluate(buffer: image, generation: 1, hostNs: 1) == .accepted)
                 CVPixelBufferLockBaseAddress(image, [])
-                let planar = CVPixelBufferIsPlanar(image)
-                let base = (planar ? CVPixelBufferGetBaseAddressOfPlane(image, 0) : CVPixelBufferGetBaseAddress(image))!.assumingMemoryBound(to: UInt8.self)
-                let stride = planar ? CVPixelBufferGetBytesPerRowOfPlane(image, 0) : CVPixelBufferGetBytesPerRow(image)
-                base[point.y * stride + point.x * (planar ? 1 : 4)] = UInt8((i % 2) * 8 + 32)
+                let plane = name.hasPrefix("chroma") ? 1 : 0
+                let base = (planar ? CVPixelBufferGetBaseAddressOfPlane(image, plane) : CVPixelBufferGetBaseAddress(image))!.assumingMemoryBound(to: UInt8.self)
+                let stride = planar ? CVPixelBufferGetBytesPerRowOfPlane(image, plane) : CVPixelBufferGetBytesPerRow(image)
+                let offset: Int
+                switch name {
+                case "sample-low-bit": offset = points[0].y * stride + points[0].x * (planar ? 1 : 4)
+                case "last-pixel": offset = 143 * stride + 255 * (planar ? 1 : 4)
+                case "chroma-u", "chroma-v":
+                    precondition(!points.contains { $0.x / 2 == 7 && $0.y / 2 == 0 })
+                    offset = name == "chroma-u" ? 14 : 15
+                case "alpha": offset = 3
+                default: offset = 0
+                }
+                base[offset] += 1
                 CVPixelBufferUnlockBaseAddress(image, [])
-                _ = gate.evaluate(buffer: image, generation: 1, hostNs: Int64(i) * 8_333_333 + 1)
+                if gate.evaluate(buffer: image, generation: 1, hostNs: 40_000_001) != .accepted {
+                    failures.append("\(format): \(name) was discarded")
+                }
+                if gate.evaluate(buffer: image, generation: 1, hostNs: 80_000_001) != .duplicate {
+                    failures.append("\(format): \(name) unchanged repeat was accepted")
+                }
             }
-            let d = gate.diagnostics(nowNs: 5_000_000_000)
-            print("A7 2560x1440 format=\(format == kCVPixelFormatType_32BGRA ? "BGRA" : "420v") samples=600 measuredLast=256 p95_ms=\(d["contentFingerprintP95Ms"]!) includes=lock,sampling,comparison,unlock,gate_diagnostics_bookkeeping actualSCK=false")
+            var padded: CVPixelBuffer?
+            precondition(CVPixelBufferCreate(kCFAllocatorDefault, 162, 90, format,
+                [kCVPixelBufferIOSurfacePropertiesKey: [:], kCVPixelBufferBytesPerRowAlignmentKey: 512] as CFDictionary, &padded) == kCVReturnSuccess)
+            let image = padded!, gate = ContentFrameGate()
+            CVPixelBufferLockBaseAddress(image, [])
+            for plane in 0..<(planar ? 2 : 1) {
+                let base = planar ? CVPixelBufferGetBaseAddressOfPlane(image, plane)! : CVPixelBufferGetBaseAddress(image)!
+                let stride = planar ? CVPixelBufferGetBytesPerRowOfPlane(image, plane) : CVPixelBufferGetBytesPerRow(image)
+                let rows = planar ? CVPixelBufferGetHeightOfPlane(image, plane) : 90
+                memset(base, 32, stride * rows)
+            }
+            CVPixelBufferUnlockBaseAddress(image, [])
+            precondition(gate.evaluate(buffer: image, generation: 1, hostNs: 1) == .accepted)
+            CVPixelBufferLockBaseAddress(image, [])
+            for plane in 0..<(planar ? 2 : 1) {
+                let base = planar ? CVPixelBufferGetBaseAddressOfPlane(image, plane)! : CVPixelBufferGetBaseAddress(image)!
+                let stride = planar ? CVPixelBufferGetBytesPerRowOfPlane(image, plane) : CVPixelBufferGetBytesPerRow(image)
+                let rows = planar ? CVPixelBufferGetHeightOfPlane(image, plane) : 90
+                let active = planar ? 162 : 648
+                precondition(stride > active, "The fixture must contain row padding")
+                for row in 0..<rows { memset(base.advanced(by: row * stride + active), 255, stride - active) }
+            }
+            CVPixelBufferUnlockBaseAddress(image, [])
+            if gate.evaluate(buffer: image, generation: 1, hostNs: 40_000_001) != .duplicate {
+                failures.append("\(format): row padding must not count as picture changes")
+            }
+            precondition(gate.evaluate(buffer: image, generation: 2, hostNs: 80_000_001) == .accepted)
+        }
+        if !failures.isEmpty {
+            FileHandle.standardError.write(Data((failures.joined(separator: "\n") + "\n").utf8))
+            exit(1)
+        }
+    }
+    static func retirementCases() {
+        let gate = ContentFrameGate(), image = buffer(16, 8, kCVPixelFormatType_32BGRA, 32)
+        precondition(gate.evaluate(buffer: image, generation: 1, hostNs: 1) == .accepted)
+        precondition((gate.diagnostics(nowNs: 1)["contentSnapshotBytes"] as? Int) == 512)
+        gate.reset(generation: 0)
+        precondition(gate.evaluate(buffer: image, generation: 1, hostNs: 2) == .duplicate)
+        gate.reset(generation: 1)
+        precondition((gate.diagnostics(nowNs: 2)["contentSnapshotBytes"] as? Int) == 0, "Stop must release the owned snapshot")
+        precondition(gate.evaluate(buffer: image, generation: 2, hostNs: 3) == .accepted)
+        gate.reset(generation: 1)
+        precondition(gate.evaluate(buffer: image, generation: 2, hostNs: 4) == .duplicate, "Retired cleanup must preserve the new capture")
+        gate.reset(generation: 2)
+        gate.reset(generation: 2)
+        precondition((gate.diagnostics(nowNs: 4)["contentSnapshotBytes"] as? Int) == 0)
+        precondition(gate.evaluate(buffer: image, generation: 2, hostNs: 5) == .accepted)
+    }
+    static func benchmark() {
+        for (width, height) in [(2560, 1440), (3840, 2160), (5120, 2820)] {
+            for format in [kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange] {
+                for mode in ["sample-change", "sample-low-bit", "exact-repeat", "unsampled-last"] {
+                    let gate = ContentFrameGate(), image = buffer(width, height, format, 32)
+                    let points = ContentFrameGate.sampleCoordinates(width: width, height: height)
+                    precondition(!points.contains { $0.x == width - 1 && $0.y == height - 1 })
+                    let point = mode == "unsampled-last" ? (x: width - 1, y: height - 1) : points.last!
+                    for i in 0..<600 {
+                        CVPixelBufferLockBaseAddress(image, [])
+                        let planar = CVPixelBufferIsPlanar(image)
+                        let base = (planar ? CVPixelBufferGetBaseAddressOfPlane(image, 0) : CVPixelBufferGetBaseAddress(image))!.assumingMemoryBound(to: UInt8.self)
+                        let stride = planar ? CVPixelBufferGetBytesPerRowOfPlane(image, 0) : CVPixelBufferGetBytesPerRow(image)
+                        if mode != "exact-repeat" {
+                            base[point.y * stride + point.x * (planar ? 1 : 4)] = UInt8((i % 2) * (mode == "sample-change" ? 8 : 1) + 32)
+                        }
+                        CVPixelBufferUnlockBaseAddress(image, [])
+                        _ = gate.evaluate(buffer: image, generation: 1, hostNs: Int64(i) * 8_333_333 + 1)
+                    }
+                    let d = gate.diagnostics(nowNs: 5_000_000_000)
+                    let report: [String: Any] = ["width": width, "height": height, "format": format == kCVPixelFormatType_32BGRA ? "BGRA" : "420v",
+                        "mode": mode, "samples": 600, "measuredLast": 256, "p95_ms": d["contentFingerprintP95Ms"]!,
+                        "accepted": d["contentAccepted"]!, "duplicates": d["contentDuplicates"]!, "actualSCK": false]
+                    let data = try! JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+                    print(String(data: data, encoding: .utf8)!)
+                }
+            }
         }
     }
     static func main() {
         if CommandLine.arguments.contains("--benchmark") { benchmark(); return }
+        exactEqualityCases()
+        retirementCases()
         precondition((7900...8100).contains(ContentFrameGate.sampleCoordinates(width:2560,height:1440).count))
         for format in [kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange] {
             checkSequence(30, format); checkSequence(24, format)
@@ -77,7 +174,7 @@ import CoreVideo
             let qbase = (CVPixelBufferIsPlanar(quant) ? CVPixelBufferGetBaseAddressOfPlane(quant, 0) : CVPixelBufferGetBaseAddress(quant))!.assumingMemoryBound(to: UInt8.self)
             qbase[point.y * stride + point.x * (CVPixelBufferIsPlanar(quant) ? 1 : 4)] = 35
             CVPixelBufferUnlockBaseAddress(quant, [])
-            precondition(one.evaluate(buffer:quant,generation:1,hostNs:5) == .duplicate, "two-bit quantization")
+            precondition(one.evaluate(buffer:quant,generation:1,hostNs:5) == .accepted, "Low-bit changes must survive")
             precondition(one.evaluate(buffer:c,generation:1,hostNs:10) == .accepted, "compare with previous accepted, not prior callback")
             if format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange {
                 let chromaOnly = buffer(160, 90, format, 32)
@@ -105,6 +202,6 @@ import CoreVideo
                 committed:true,interpolation:true,canObserve:true,outputObservable:true,chinese:chinese)
             precondition(label.contains(chinese ? "内容≈ 30.0" : "Content≈ 30.0"))
         }
-        print("ContentFrameGate: 24/30/120, keepalive, point, quantization, chroma, generation, size, HUD, BGRA and 420v pass")
+        print("ContentFrameGate: exact pixels, low bits, alpha, chroma, padding, ownership, 24/30/120, keepalive, generation, size and HUD pass")
     }
 }

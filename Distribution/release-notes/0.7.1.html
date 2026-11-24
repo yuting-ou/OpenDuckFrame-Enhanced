@@ -1,0 +1,18 @@
+<h2>OpenDuckFrame Enhanced 0.7.1</h2>
+<ul>
+  <li>Apple 低延迟的窗口／显示器模式新增“插帧画质”：自动保留运行时支持的尺寸，或选择 720p 流畅优先。只缩小插帧推理，原帧和输出尺寸不变；生成帧可能变软，也不保证达到目标帧率。</li>
+  <li>实时内容判重改为逐像素精确比较，低比特、色度、Alpha 和采样点之外的变化不再被误丢弃；停止采集时会释放快照，且不会清掉新一代采集。</li>
+  <li>合并上游 0.6.3 的屏幕录制权限恢复修复：权限说明留在窗口列表内，不再叠在系统提示上；被拒绝后提供“打开系统设置”。</li>
+  <li>实时预览运行但尚未增强时，操作区明确显示“停止采集”。</li>
+  <li>切到视频文件时会停止窗口／显示器采集并取消待提交的实时计划；文件模式即使发现残留采集，也仍可用“停止采集”收口。</li>
+  <li>GitHub 链接指向增强版仓库，并禁用继承来的上游更新源，避免上游版本覆盖增强功能。</li>
+</ul>
+<ul>
+  <li>Live Apple low-latency window/display profiles add Automatic / 720p Interpolation detail. Only intermediate inference is reduced; originals and output keep source dimensions, generated frames may soften, and target FPS is not guaranteed.</li>
+  <li>Repeated live content is detected by exact pixel comparison, preserving low-bit, chroma, alpha and unsampled-pixel changes. Capture stop releases the owned snapshot without clearing a newer generation.</li>
+  <li>Includes the upstream 0.6.3 Screen Recording recovery fix: guidance stays inline with an Open System Settings action instead of stacking an app sheet over the system prompt.</li>
+  <li>The action area now says Stop Capture while a live preview is running before enhancement is active.</li>
+  <li>Switching to a video file stops window/display capture and cancels pending live plans; file mode can still retire unexpected leftover capture with Stop Capture.</li>
+  <li>GitHub links target the Enhanced repository, and the inherited upstream update feed is disabled so an upstream release cannot replace enhanced features.</li>
+</ul>
+<p>本增强版保留 4K 文件插帧、10-bit SDR 支持、融合 4K 推理管线、新手工作台与插帧生效检测。社区安装包使用临时签名，未经过 Apple 公证；升级后可能需重新授予屏幕录制或辅助功能权限。本构建不连接上游更新源。 This Enhanced build retains 4K file interpolation, 10-bit SDR support, the fused 4K pipeline, beginner-friendly workbench and interpolation health reporting. The community DMG is ad-hoc signed and not Apple notarized; macOS may request Screen Recording or Accessibility permission again after an upgrade. This build does not connect to the upstream update feed.</p>

@@ -82,6 +82,12 @@ private final class SourceSizeControls {
  var cancellations = 0
  var stops = 0
  var sourceChoices = 0
+ var videoCadenceRow: Button? = Button()
+ var lowLatencySizeRow: Button? = Button()
+ var lowLatencySizePopup = Button()
+ func refreshInterpolationVisibility() {
+  // ACTUAL_INTERPOLATION_VISIBILITY
+ }
 
  func selectedFilePlayer() -> Player? { filePlayer }
  func selectedScreen() -> NSScreen? { nil }
@@ -123,6 +129,63 @@ private final class SourceSizeControls {
 
 @main struct TestRunner {
  @MainActor static func main() throws {
+  let visibility = WorkbenchActionControls()
+  visibility.profile.interpolationEngineID = "apple.lowlatency"
+  visibility.profile.sourceKind = "window"
+  visibility.profile.interpolationEnabled = false
+  visibility.refreshInterpolationVisibility()
+  precondition(visibility.lowLatencySizePopup.isEnabled == false, "Disabled interpolation must disable its detail control")
+  visibility.profile.interpolationEnabled = true
+  visibility.refreshInterpolationVisibility()
+  precondition(visibility.lowLatencySizePopup.isEnabled, "Enabling interpolation must enable its detail control without reloading the profile")
+  for source in ["file", "window", "file", "display"] {
+   visibility.profile.sourceKind = source
+   visibility.refreshInterpolationVisibility()
+   precondition(visibility.lowLatencySizeRow?.isHidden == (source == "file"), "Source changes must refresh interpolation detail visibility")
+  }
+  visibility.profile.interpolationEngineID = "rife.metal"
+  visibility.refreshInterpolationVisibility()
+  precondition(visibility.lowLatencySizeRow?.isHidden == true, "Other engines must hide the Apple detail control")
+  func profileWithProcessingPreset(_ profile: EnhancementProfile, _ value: Any?) throws -> EnhancementProfile {
+   var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(profile)) as! [String: Any]
+   object["lowLatencyProcessingPreset"] = value
+   return EnhancementProfileStore.decode(try JSONSerialization.data(withJSONObject: object), fallbackName: "detail")!
+  }
+  func persistedProcessingPreset(_ profile: EnhancementProfile) throws -> Int? {
+   let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(profile)) as! [String: Any]
+   return object["lowLatencyProcessingPreset"] as? Int
+  }
+  for source in ["window", "display", "file"] {
+   for engine in ["apple.lowlatency", "apple.frc", "rife.metal"] {
+    for enabled in [true, false] {
+     var baseline = EnhancementProfile()
+     baseline.sourceKind = source; baseline.interpolationEngineID = engine; baseline.interpolationEnabled = enabled
+     baseline.captureLimit = "30"; baseline.srInputPreset = 720; baseline.sourceWindowPreset = 720
+     baseline.outputWidth = 2560; baseline.outputHeight = 1440; baseline.rate = .multiplier(4)
+     LiveEngineSelection.normalize(&baseline)
+     let smaller = try profileWithProcessingPreset(baseline, 720)
+     let savedPreset = try persistedProcessingPreset(smaller)
+     precondition(savedPreset == 720, "The optional 720p interpolation budget must survive profile decode/encode")
+     precondition(smaller.sourceKind == source && smaller.interpolationEngineID == engine && smaller.rate == baseline.rate
+       && smaller.captureLimit == "30" && smaller.srInputPreset == 720 && smaller.sourceWindowPreset == 720
+       && smaller.outputWidth == 2560 && smaller.outputHeight == 1440,
+       "Interpolation detail must not change source, rate, capture, scaling or output choices")
+     let changes = WorkbenchActionControls(); changes.profile = smaller
+     precondition(changes.hasChanges(relativeTo: baseline) == (enabled && source != "file" && engine == "apple.lowlatency"),
+       "Only enabled live Apple interpolation applies this budget")
+     var reset = smaller; applyDefaultPreset(&reset)
+     let resetPreset = try persistedProcessingPreset(reset)
+     precondition(resetPreset == 0, "Reset must restore automatic interpolation detail")
+    }
+   }
+  }
+  let defaultDetail = try persistedProcessingPreset(EnhancementProfile())
+  precondition(defaultDetail == 0, "New profiles must keep automatic interpolation detail")
+  for value: Any? in [nil, 0, -1, 1080, "720", NSNull()] {
+   let migrated = try profileWithProcessingPreset(EnhancementProfile(), value)
+   let migratedPreset = try persistedProcessingPreset(migrated)
+   precondition(migratedPreset == 0, "Missing or unsupported processing presets must migrate to automatic")
+  }
   if #available(macOS 26.0, *) {
    VTLowLatencyFrameInterpolationConfiguration.isSupported = true
    let appleDefault = EnhancementProfile()
@@ -282,11 +345,15 @@ private final class SourceSizeControls {
    preview.refreshActions()
    precondition(!preview.isEnhancing && preview.stopButton?.isHidden == false,
      "A source-only capture must remain stoppable before an engine commits or after preparation fails")
+   precondition(preview.stopButton?.title == "Stop Capture",
+     "Source-only capture must not be labeled as active enhancement")
    precondition(preview.startButton?.isHidden == false && preview.startButton?.isEnabled == true,
      "Showing Stop for source preview must preserve the enhancement start action")
    preview.pendingApply = preview.profile
    preview.refreshActions()
    precondition(preview.startButton?.title == "Cancel" && preview.stopButton?.isHidden == false)
+   precondition(preview.stopButton?.title == "Stop Capture",
+     "Pending engine preparation must not relabel source-only capture as enhancement")
    preview.capture.running = false
    preview.pendingApply = nil
    preview.refreshActions()
@@ -480,6 +547,17 @@ private final class SourceSizeControls {
   try FileManager.default.createDirectory(at:temp,withIntermediateDirectories:true)
   defer { try? FileManager.default.removeItem(at:temp) }
   EnhancementProfileStore.testDirectory=temp
+  for value in [720, 0] {
+   var detail = try profileWithProcessingPreset(EnhancementProfile(), value)
+   detail.configName = "interpolation-detail"; detail.configID = "custom:interpolation-detail"
+   try EnhancementProfileStore.saveCurrent(detail)
+   try EnhancementProfileStore.savePreset(detail, id: "preset:film")
+   let current = try persistedProcessingPreset(EnhancementProfileStore.load())
+   let named = try persistedProcessingPreset(EnhancementProfileStore.loadNamed("interpolation-detail")!)
+   let preset = try persistedProcessingPreset(EnhancementProfileStore.loadPreset("preset:film")!)
+   precondition(current == value && named == value && preset == value,
+     "Automatic and 720p detail must survive current, named and preset saves")
+  }
   for source in ["window", "display", "file"] {
    for oldMode in ["original", "compare"] {
     var saved = EnhancementProfile()

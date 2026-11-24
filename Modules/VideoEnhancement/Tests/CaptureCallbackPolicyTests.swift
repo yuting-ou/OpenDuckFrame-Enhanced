@@ -20,6 +20,10 @@ import ScreenCaptureKit
         precondition(binding.snapshot(old) == nil && binding.snapshot(next) == 2)
         precondition(binding.withCurrent(next, generation: 2, { currentEmitted = true }) && currentEmitted)
         binding.retire(); precondition(binding.snapshot(next) == nil)
+        binding.activate(old, generation: 1)
+        binding.retire(old); precondition(binding.snapshot(old) == nil)
+        binding.activate(next, generation: 2)
+        binding.retire(old); precondition(binding.snapshot(next) == 2, "Retiring an old stream must preserve the current binding")
         print("{\"ok\":true,\"scope\":\"production callback status policy and atomic stream binding, simulated object identities\"}")
     }
 }

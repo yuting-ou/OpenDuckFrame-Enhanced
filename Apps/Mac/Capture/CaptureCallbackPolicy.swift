@@ -12,6 +12,10 @@ final class CaptureStreamBinding: @unchecked Sendable {
         lock.lock(); identity = ObjectIdentifier(stream); self.generation = generation; lock.unlock()
     }
     func retire() { lock.lock(); identity = nil; lock.unlock() }
+    func retire(_ stream: AnyObject) {
+        lock.lock(); defer { lock.unlock() }
+        if identity == ObjectIdentifier(stream) { identity = nil }
+    }
     func snapshot(_ stream: AnyObject) -> UInt64? {
         lock.lock(); defer { lock.unlock() }
         return identity == ObjectIdentifier(stream) ? generation : nil

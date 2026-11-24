@@ -811,6 +811,7 @@ struct EnhancementProfile: Codable, Equatable {
     var appearance = "system"
     var captureLimit = "auto"
     var automaticVideoCadence = false
+    var lowLatencyProcessingPreset = 0
     var configName = "默认"
     var configID: String? = nil
     var modelID = LiveEngineSelection.defaultSelection.model
@@ -833,6 +834,7 @@ private func applyDefaultPreset(_ profile: inout EnhancementProfile) {
     profile.interpolationQuality = defaults.interpolationQuality
     profile.rifeStreamEnabled = defaults.rifeStreamEnabled
     profile.automaticVideoCadence = defaults.automaticVideoCadence
+    profile.lowLatencyProcessingPreset = defaults.lowLatencyProcessingPreset
     profile.modelID = defaults.modelID
     profile.rate = defaults.rate
     profile.scaleEnabled = defaults.scaleEnabled
@@ -885,6 +887,7 @@ enum EnhancementProfileStore {
         if object["sourceWindowPreset"] == nil { object["sourceWindowPreset"] = 0 }
         if object["captureLimit"] == nil { object["captureLimit"] = "auto" }
         if object["automaticVideoCadence"] == nil { object["automaticVideoCadence"] = false }
+        if (object["lowLatencyProcessingPreset"] as? Int) != 720 { object["lowLatencyProcessingPreset"] = 0 }
         object["windowOutputMode"] = "follow"
         object["viewMode"] = "enhanced"
         if object["configName"] == nil { object["configName"] = fallbackName }
@@ -1330,6 +1333,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private let scaleSwitch = NSSwitch()
     private let qualityPopup = NSPopUpButton()
     private let videoCadencePopup = NSPopUpButton()
+    private let lowLatencySizePopup = NSPopUpButton()
     private let rateMode = NSSegmentedControl(labels: ["FPS", "X"], trackingMode: .selectOne, target: nil, action: nil)
     private let fpsPopup = NSPopUpButton()
     private let fpsNum = NSTextField()
@@ -1481,6 +1485,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     private var customRateRow: NSView?
     private var interpolationQualityRow: NSView?
     private var videoCadenceRow: NSView?
+    private var lowLatencySizeRow: NSView?
     private var applyingFileSettings = false
     private var fileApplyError = ""
     private var lastFileStatsUpdate: TimeInterval = 0
@@ -2564,6 +2569,8 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             interpolationQualityRow = frameQuality
             let cadence = row(EnhancementText.t("Content timing", "内容节奏"), videoCadencePopup)
             videoCadenceRow = cadence
+            let processing = row(EnhancementText.t("Interpolation detail", "插帧画质"), lowLatencySizePopup)
+            lowLatencySizeRow = processing
             let fixedRate = row(EnhancementText.t("Target FPS", "目标帧率"), fpsPopup)
             targetRateRow = fixedRate
             let customRate = row("n/d", pair(fpsNum, fpsDen, joinedBy: "/"))
@@ -2575,7 +2582,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             phaseLabel.textColor = .secondaryLabelColor
             compatibilityButton.target = self
             compatibilityButton.action = #selector(useFrameRateConversion)
-            let frames = column([row(EnhancementText.t("Engine", "引擎"), enginePopup), frameQuality, cadence,
+            let frames = column([row(EnhancementText.t("Engine", "引擎"), enginePopup), frameQuality, processing, cadence,
                                  phaseLabel, compatibilityButton,
                                  row(EnhancementText.t("Frame rate", "帧率"), rateMode),
                                  fixedRate, customRate, multiplier], spacing: 0)
@@ -3039,6 +3046,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
     @objc private func sourceKindChanged() {
         cancelCountdown()
         inputRouter?.stop(reason:"source_changed"); interactionArmed = false
+        if sourceKindControl.selectedSegment == 2 { stopImmediately() }
         readControls()
         reloadQualityItems()
         applyModeVisibility()
@@ -3653,11 +3661,13 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             }
         }
         // Source preview and a failed initial plan still own a live capture.
-        let liveCaptureRunning = profile.sourceKind != "file" && capture.running
+        let liveCaptureRunning = capture.running
         stopButton?.isHidden = !enhancing && !filePreparing && !liveCaptureRunning
         stopButton?.title = filePreparing && !enhancing
             ? EnhancementText.t("Cancel", "取消")
-            : EnhancementText.t("Stop Enhancement", "关闭增强")
+            : (liveCaptureRunning && !enhancing
+                ? EnhancementText.t("Stop Capture", "停止采集")
+                : EnhancementText.t("Stop Enhancement", "关闭增强"))
     }
 
     /// Form controls share one trailing column; switches keep their native size.
@@ -3711,6 +3721,8 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         enginePopup.action = #selector(engineChanged)
         qualityPopup.addItems(withTitles: InterpolationQualitySelection.ids.map(InterpolationQualitySelection.title))
         videoCadencePopup.addItems(withTitles: [EnhancementText.t("General window", "通用窗口"), EnhancementText.t("Automatic video", "自动视频")])
+        lowLatencySizePopup.addItems(withTitles: [EnhancementText.t("Automatic · more detail", "自动 · 较高画质"), EnhancementText.t("720p · smoother playback", "720p · 流畅优先")])
+        lowLatencySizePopup.toolTip = EnhancementText.t("720p limits only interpolation processing. Originals and output keep their size; generated frames may look softer. It does not guarantee the target FPS.", "720p 仅限制插帧处理尺寸，原帧和输出尺寸不变；生成的中间帧可能变软，不保证达到目标帧率。")
         videoCadencePopup.toolTip = EnhancementText.t("Estimates 24/25/30 FPS and evens out presentation. Adds buffering; audio remains with the source app.", "估计 24／25／30 FPS 并整理播放节奏。会增加缓冲，声音仍由原应用播放。")
         fpsPopup.addItems(withTitles: ["24", "25", "30", "50", "60", "90", "120", EnhancementText.t("Custom", "自定义")])
         scalePopup.addItems(withTitles: AppleSRSelection.ids.map(AppleSRSelection.title))
@@ -3728,7 +3740,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         multiplierControl.action = #selector(controlChanged)
         appearanceControl.target = self
         appearanceControl.action = #selector(appearanceChanged)
-        for control in [qualityPopup, videoCadencePopup, fpsPopup, scalePopup, scaleQualityPopup, srInputPopup, sourceWindowPopup, sizePopup, displayPopup] {
+        for control in [qualityPopup, videoCadencePopup, lowLatencySizePopup, fpsPopup, scalePopup, scaleQualityPopup, srInputPopup, sourceWindowPopup, sizePopup, displayPopup] {
             control.target = self
             control.action = #selector(controlChanged)
         }
@@ -5041,6 +5053,12 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         r7LastHealthAt = 0
         r7Visibility = ""
         cancelCountdown()
+        liveApply.cancel(); pendingApply = nil; pendingSourceGeneration = nil
+        if stopPipeline {
+            if capture.running { capture.stop() }
+            processor.stop()
+        }
+        capture.paused = false
         if profile.sourceKind == "file" {
             applyingFileSettings = true
             fileOutputToken &+= 1
@@ -5056,19 +5074,15 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             refreshPlanLabel()
             return
         }
-        if stopPipeline { capture.stop() }
         viewerActive = false; viewerFollowOverride = false; viewerReturnPID = nil
         viewerControlsPanel?.orderOut(nil)
         (outputWindow as? TargetPanel)?.viewerKeyboard = false
-        liveApply.cancel(); pendingApply = nil; pendingSourceGeneration = nil
-        capture.paused = false
         outputWarmupToken &+= 1
         outputMinimumCaptureHost = 0
         outputWindow?.orderOut(nil)
         targetHUD?.orderOut(nil)
         targetCountdownHUD?.orderOut(nil)
         outputPreview.refreshVisibilitySnapshot()
-        if stopPipeline { processor.stop() }
         lastStats = [:]
         lastStatsReceipt = 0
         updateFPSOverlay()
@@ -5123,6 +5137,8 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
 
     private func applyModeVisibility() {
         videoCadenceRow?.isHidden = profile.interpolationEngineID != "apple.lowlatency" || profile.sourceKind == "file"
+        lowLatencySizeRow?.isHidden = profile.interpolationEngineID != "apple.lowlatency" || profile.sourceKind == "file"
+        lowLatencySizePopup.isEnabled = profile.interpolationEnabled
         captureCapPopup.isEnabled = !profile.usesAutomaticVideoCadence
         captureCapPopup.selectItem(at: profile.usesAutomaticVideoCadence ? 2 : (["auto": 0, "30": 1, "60": 2][profile.captureLimit] ?? 0))
         srInputRow?.isHidden = profile.sourceKind == "file"
@@ -5707,6 +5723,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         request.qualityID = profile.interpolationQuality
         request.rifeStreamEnabled = profile.rifeStreamEnabled
         request.automaticVideoCadence = profile.usesAutomaticVideoCadence
+        request.lowLatencyProcessingPreset = profile.sourceKind != "file" && engine == "apple.lowlatency" && profile.interpolationEnabled ? Int32(profile.lowLatencyProcessingPreset) : 0
         request.interpolationEnabled = profile.interpolationEnabled && (engine == "apple.frc" || engine == "apple.lowlatency" || engine == "rife.metal" || engine == "distildrba.coreml")
         if engine == "apple.lowlatency" {
             let frames2: Bool
@@ -5841,6 +5858,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         let baseline = profile.sourceKind == "file" ? (fileApplied ?? EnhancementProfile()) : applied
         let formDiffers = profile.interpolationEngineID != baseline.interpolationEngineID
             || (profile.interpolationEngineID == "apple.lowlatency" && profile.sourceKind != "file" && profile.automaticVideoCadence != baseline.automaticVideoCadence)
+            || (profile.interpolationEngineID == "apple.lowlatency" && profile.sourceKind != "file" && profile.interpolationEnabled && profile.lowLatencyProcessingPreset != baseline.lowLatencyProcessingPreset)
             || profile.interpolationEnabled != baseline.interpolationEnabled
             || profile.modelID != baseline.modelID
             || profile.rate != baseline.rate
@@ -5999,6 +6017,9 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
             ? EnhancementText.t("File interpolation uses Fast to keep output stable. Window and display capture can still use Balanced or High Quality.", "文件插帧使用快速档以保证输出稳定；窗口/显示器采集仍可选择均衡或高画质。")
             : nil
         videoCadencePopup.selectItem(at: profile.automaticVideoCadence ? 1 : 0)
+        lowLatencySizePopup.selectItem(at: profile.lowLatencyProcessingPreset == 720 ? 1 : 0)
+        lowLatencySizeRow?.isHidden = profile.interpolationEngineID != "apple.lowlatency" || profile.sourceKind == "file"
+        lowLatencySizePopup.isEnabled = profile.interpolationEnabled
         videoCadenceRow?.isHidden = profile.interpolationEngineID != "apple.lowlatency" || profile.sourceKind == "file"
         videoCadencePopup.isEnabled = profile.interpolationEnabled
         interpolationQualityRow?.isHidden = profile.interpolationEngineID == "apple.lowlatency"
@@ -6071,6 +6092,7 @@ final class EnhancementWorkbenchController: NSWindowController, NSWindowDelegate
         profile.interpolationEnabled = interpolationSwitch.state == .on
         readEngineSelection()
         profile.automaticVideoCadence = videoCadencePopup.indexOfSelectedItem == 1
+        profile.lowLatencyProcessingPreset = lowLatencySizePopup.indexOfSelectedItem == 1 ? 720 : 0
         profile.interpolationQuality = (qualityPopup.selectedItem?.representedObject as? String) ?? "fast"
         profile.sourceKind = ["window", "display", "file"][max(0, sourceKindControl.selectedSegment)]
         if rateMode.selectedSegment == 1 {

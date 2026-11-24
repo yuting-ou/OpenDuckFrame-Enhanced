@@ -280,7 +280,7 @@ static double SPLLCenter(CVPixelBufferRef buffer) {
 - (NSString *)modelID { return _modelID; }
 - (NSString *)preparationFallbackReason { return _preparationFallbackReason ?: @""; }
 
-- (BOOL)prepareLiveWidth:(int)width height:(int)height frames:(NSInteger)frames error:(NSError **)error {
+- (BOOL)prepareLiveWidth:(int)width height:(int)height frames:(NSInteger)frames processingPreset:(int)preset error:(NSError **)error {
     if (width < 2 || height < 2 || (width & 1) || (height & 1) || (frames != 1 && frames != 2) || !self.class.isSupported)
         return [self prepareWidth:width height:height frames:frames error:error];
     // macOS 26 does not expose per-device limits. Keep that path at 720p.
@@ -290,6 +290,10 @@ static double SPLLCenter(CVPixelBufferRef buffer) {
         NSInteger pixels = [VTLowLatencyFrameInterpolationConfiguration maximumPixelCountForSpatialScaleFactor:1];
         if (dimension > 0) maxDimension = dimension;
         if (pixels > 0) maxPixels = pixels;
+    }
+    if (preset == 720) {
+        maxDimension = MIN(maxDimension, 1280);
+        maxPixels = MIN(maxPixels, 1280 * 720);
     }
     NSSize size = SPLLFitLiveSize(width, height, maxDimension, maxPixels);
     NSError *primaryError = nil;

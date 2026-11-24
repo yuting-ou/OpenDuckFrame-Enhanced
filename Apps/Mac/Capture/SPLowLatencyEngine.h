@@ -27,7 +27,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Fits live inference to VideoToolbox's size limits. Inputs and returned
 /// frames retain the caller's dimensions; only intermediate inference is smaller.
 /// File providers keep the strict prepareWidth:height:frames:error: entry point.
-- (BOOL)prepareLiveWidth:(int)width height:(int)height frames:(NSInteger)frames error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)prepareLiveWidth:(int)width height:(int)height frames:(NSInteger)frames processingPreset:(int)preset error:(NSError *_Nullable *_Nullable)error;
 
 /// Previous frame is A and source frame is B. Outputs follow `phases` and each owns a +1 buffer.
 /// The completion runs once. Source buffers must stay alive until then.

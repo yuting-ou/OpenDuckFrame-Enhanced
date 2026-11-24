@@ -30,8 +30,8 @@ settings:
     SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SP_ENHANCE"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     ARCHS: arm64
-    MARKETING_VERSION: "0.6.3"
-    CURRENT_PROJECT_VERSION: "50"
+    MARKETING_VERSION: "0.7.1"
+    CURRENT_PROJECT_VERSION: "51"
     ODF_BUNDLE_ID: app.openduckframe.OpenDuckFrame
     ODF_DISPLAY_NAME: OpenDuckFrame
     ODF_CANDIDATE_LABEL: "r6"
@@ -207,7 +207,7 @@ targets:
         NSHumanReadableCopyright: "Copyright © 2026 OpenDuckFrame contributors"
         # Help menu links; an empty value hides that item.
         ODFWebsiteURL: "https://openduckframe.cn/"
-        ODFRepositoryURL: "https://github.com/Jun-bao/OpenDuckFrame"
+        ODFRepositoryURL: "https://github.com/yuting-ou/OpenDuckFrame-Enhanced"
         ODFFeedbackURL: "https://openduckframe.cn/feedback/"
         NSSpeechRecognitionUsageDescription: "OpenDuckFrame generates subtitles from the audio of the media you open. Processing takes place on this Mac."
         NSScreenCaptureUsageDescription: "OpenDuckFrame shows and enhances the window or display you select. Capture stays on this Mac."

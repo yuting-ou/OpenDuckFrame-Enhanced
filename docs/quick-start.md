@@ -15,7 +15,9 @@ OBS; OpenDuckFrame does not expose a separate capture-card input.
 For window and display capture, grant Screen Recording access in **System
 Settings → Privacy & Security** when macOS prompts. The precise setting name
 varies by macOS version. If access is denied, change it there and reopen the app
-when macOS requests it. Video-file playback does not need capture permission.
+when macOS requests it. The window list keeps recovery steps inline and offers
+**Open System Settings** without covering the macOS prompt with another app
+dialog. Video-file playback does not need capture permission.
 Community updates are ad-hoc signed, so macOS may ask for capture or
 Accessibility permission again after an upgrade.
 
@@ -37,6 +39,8 @@ ODF-VFI; a new named configuration copies the current settings.
    frame generation at X2, or Apple real-time super resolution. Apple video SR
    is also available on supported devices; live video SR requires frame generation
    to be off. Higher resolutions and multipliers require more processing time.
+   For live Apple low latency, advanced **Interpolation detail** can cap generated-frame
+   inference at 720p; originals and output keep their source dimensions.
 3. For a window, select it in the grouped list and press **Enhance Selected
    Window**, or press **Delayed Enhancement** and focus the desired window
    before the countdown ends. The countdown defaults to 3 seconds and can be
@@ -65,7 +69,7 @@ Performance, latency and artifacts vary with motion, resolution and backend.
 
 ## Report a problem
 
-Use the [bug form](https://github.com/Jun-bao/OpenDuckFrame/issues/new?template=bug_report.yml).
+Use the [bug form](https://github.com/yuting-ou/OpenDuckFrame-Enhanced/issues/new/choose).
 Include app and macOS versions, Mac model, source type and resolution, engine,
 requested rate, actual output and reproduction steps. Inspect logs and screenshots
 before sharing: window titles and media paths can be personal.

@@ -2,6 +2,24 @@
 
 All notable public releases will be documented here.
 
+## 0.7.1 — 2026-11-24
+
+- Add an Automatic / 720p Interpolation detail choice for live Apple
+  low-latency window and display profiles. Only intermediate inference is
+  reduced; originals and output keep source dimensions, and target FPS is not
+  guaranteed.
+- Compare captured pixels exactly when detecting repeated content, preserving
+  low-bit, chroma, alpha and unsampled-pixel changes. Release the owned snapshot
+  when capture stops without clearing a newer capture generation.
+- Keep Screen Recording recovery inline with an explicit System Settings action,
+  matching the upstream 0.6.3 fix without stacking app sheets over system prompts.
+- Show Stop Capture while a live source preview is running but enhancement is
+  not active, and repair the standalone R8 fixture decoder test wrapper.
+- Stop live capture and cancel pending live plans when switching to a video
+  file, so file mode cannot keep a retired window/display pipeline alive.
+- Keep the Enhanced repository link and disable the inherited upstream Sparkle
+  feed until the fork has its own update channel.
+
 ## 0.5.0 — 2026-11-14
 
 - Offer ODF-VFI (default), Apple low-latency interpolation and Apple FRC in the

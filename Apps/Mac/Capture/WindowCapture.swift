@@ -820,6 +820,8 @@ final class WindowCaptureSource: NSObject, SCStreamOutput, SCStreamDelegate, SCC
         }
 #endif
         streamBinding.retire()
+        let retiredGeneration = currentGeneration
+        queue.async { [weak self] in self?.contentFrameGate.reset(generation: retiredGeneration) }
         geometryLock.lock(); frameGeometryReceipt = nil; geometryLock.unlock()
         stream = nil
         running = false
@@ -1131,6 +1133,8 @@ final class WindowCaptureSource: NSObject, SCStreamOutput, SCStreamDelegate, SCC
                 geometryLock.unlock()
                 onGeometry?(nil, generation)
             }
+            streamBinding.retire(stream)
+            queue.async { [weak self] in self?.contentFrameGate.reset(generation: generation) }
         }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
